@@ -60,11 +60,30 @@ main = do
     dbName   = "default-user.db"
     progName = "steam-compare"
 
+putErrStrLn :: String -> IO ()
+putErrStrLn e = hPutStr stderr e >> putChar '\n'
+
+handleEither :: IConnection c => c -> (String -> IO ()) -> IO () -> Either String b -> IO ()
+handleEither c failAct successAct r = case r of
+    Left e  -> rollback c >> failAct ("Update failed: " ++ e)
+    Right _ -> putStrLn "Update succesful." >> successAct
+
+
+progUpdate :: IConnection c => c -> SteamID -> IO ()
+progUpdate c sid = resetOwnedGamesDB c >> updateOwnedGames c sid >>= handleEither c putErrStrLn (commit c)
+
 prog :: SteamID -> Maybe FilePath -> String -> IO ()
 prog sid optDBPath defDBPath = do
 
     let (dbInitAction, dbPath) = case optDBPath of
-            Nothing -> (resetDB >> updateGames >> \c -> updateOwnedGames c sid, defDBPath)
+            Nothing -> ( \c -> do
+                             let secure = (>>= handleEither c (\e -> disconnect c >> die e) (pure ()))
+                             resetDB c
+                             secure $ updateGames c 
+                             secure $ updateOwnedGames c sid
+                             commit c
+                       , defDBPath
+                       )
             Just p  -> (const $ return (), p)
 
     c <- connectSqlite3 dbPath
@@ -75,7 +94,7 @@ prog sid optDBPath defDBPath = do
 
     args <- getArgs
     case args of
-        ["update"]      -> resetOwnedGamesDB c >> updateOwnedGames c sid >> commit c
+        ["update"]      -> progUpdate c sid
         ["appid", game] -> queryAppID c game >>= putTableAlt [def, numCol, def] (\(n, i) -> [n, show i, shopURL i])
         ["blacklist"]   -> do
             promptGamesList' id "blacklist" $ \someGames -> do

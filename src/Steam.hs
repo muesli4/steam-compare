@@ -1,5 +1,7 @@
 module Steam where
 
+import Database.HDBC
+
 import Steam.Database
 import Steam.Fetch
 
@@ -7,12 +9,12 @@ updateGames :: IConnection c => c -> IO (Either String ())
 updateGames c = do
     optGEL <- fetchGameEntryList
     case optGEL of
-        Right gel -> insertGames c gel
-        Left e    -> Left e
+        Right gel -> Right <$> insertGames c gel
+        Left e    -> return $ Left e
 
 updateOwnedGames :: IConnection c => c -> SteamID -> IO (Either String ())
 updateOwnedGames c sid = do
     optOGL <- fetchOwnedGameListXML sid
     case optOGL of
-        Right ogl -> insertOwnedGames ogl
-        Left e    -> Left e
+        Right ogl -> Right <$> insertOwnedGames c ogl
+        Left e    -> return $ Left e
