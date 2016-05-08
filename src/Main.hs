@@ -68,7 +68,7 @@ handleEither c failAct successAct r = case r of
     Left e  -> rollback c >> failAct ("Update failed: " ++ e)
     Right _ -> putStrLn "Update succesful." >> successAct
 
-
+-- | Update owned games of a steam user.
 progUpdate :: IConnection c => c -> SteamID -> IO ()
 progUpdate c sid = resetOwnedGamesDB c >> updateOwnedGames c sid >>= handleEither c putErrStrLn (commit c)
 
@@ -165,12 +165,10 @@ prog sid optDBPath defDBPath = do
                     let msg = "Games to " ++ verb ++ " (" ++ show (length games) ++ "):"
                     putStrLn $ '-' <$ msg
                     putStrLn msg
-                    putTableCheckered (repeat $ fixedLeftCol 30) id (chunksOf (tWidth `div` 30) games)
+                    -- TODO does not fit the screen
+                    putTableCheckered (repeat $ fixedLeftCol 30) id (chunksOf ((tWidth - 5) `div` 31) games)
                     act someGames
                 Nothing -> putStrLn "No games specified."
-
-shopURL :: Int -> String
-shopURL appID = "http://store.steampowered.com/app/" ++ show appID ++ "/"
 
 processDetails :: IConnection c => c -> [Int] -> IO [(Int, String)]
 processDetails c appIDs = do

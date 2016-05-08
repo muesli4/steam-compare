@@ -13,10 +13,10 @@ placeholder :: String
 placeholder = "(?)"
 
 placeholders :: [a] -> String
-placeholders = intercalate "," . map (const placeholder)
+placeholders = intercalate "," . (placeholder <$)
 
 mergeQ :: [String] -> String
-mergeQ qs = concat $ zipWith (++) qs (repeat ";")
+mergeQ qs = concatMap (++ ";") qs
 
 --newtype DB c a = DB (ReaderT c IO a)
 
@@ -60,43 +60,30 @@ resetBlacklistDB c = runRaw c query
                    , "CREATE TABLE blacklist (appid int primary key)"
                    ]
 
+data Table = Table
+           { name    :: String
+           , numCols :: Int
+           }
+
+insertMany :: IConnection c => c -> Table -> [[SqlValue]] -> IO ()
+insertMany c (Table name numCols) vs = do
+    stmt <- prepare c $ "INSERT INTO " ++ name ++ " VALUES (" ++ intercalate "," (replicate numCols "?") ++ ")"
+    executeMany stmt vs
+    finish stmt
+
 insertGames :: IConnection c => c -> GameEntryList -> IO ()
-insertGames c (GameEntryList ges) = do
-    stmt <- prepare c "INSERT INTO games VALUES (?, ?)"
-    executeMany stmt $ map (\(GameEntry i n) -> [toSql i, toSql n]) ges
+insertGames c (GameEntryList ges) = insertMany c (Table "games" 2) $ map (\(GameEntry i n) -> [toSql i, toSql n]) ges
 
 insertOwnedGames :: IConnection c => c -> OwnedGameList -> IO ()
-insertOwnedGames c (OwnedGameList ogs) = do
-    stmt <- prepare c "INSERT INTO owned_games VALUES (?)"
-    executeMany stmt $ map (\(OwnedGame i) -> [toSql i]) ogs
-
--- | Finds all entries in the database which do not have details.
-queryIncompleteAppIDs :: IConnection c => c -> NE.NonEmpty String -> IO [Int]
-queryIncompleteAppIDs c (NE.toList -> ns) = do
-    stmt <- prepare c query
-    execute stmt $ map toSql ns
-    (fmap $ fromSql . head) <$> fetchAllRows' stmt
-  where
-    query = "WITH inputs(name) as (\
-                \VALUES " ++ placeholders ns ++ "\
-            \) \
-            \SELECT g.appid \
-            \FROM games AS g, inputs AS i \
-            \WHERE g.name LIKE i.name \
-                  \AND g.appid NOT IN (SELECT d.appid FROM details AS d) \
-            \EXCEPT SELECT * FROM blacklist;"
+insertOwnedGames c (OwnedGameList ogs) = insertMany c (Table "owned_games" 1) $ map (\(OwnedGame i) -> [toSql i]) ogs
 
 insertDetails :: IConnection c => c -> NE.NonEmpty (Int, GameInfo) -> IO ()
-insertDetails c (NE.toList -> ts) = do
-        stmt <- prepare c "INSERT INTO details VALUES (?, ?, ?)"
-        executeMany stmt $ map (\(appID, gi) -> [toSql appID, toSql $ if linux gi then 1 :: Int else 0, toSql $ optMCScore gi]) ts
+insertDetails c (NE.toList -> ts) = insertMany c (Table "details" 3) $ map (\(appID, gi) -> [toSql appID, toSql $ if linux gi then 1 :: Int else 0, toSql $ optMCScore gi]) ts
 
 insertAlias :: IConnection c => c -> NE.NonEmpty (Int, GameInfo) -> IO ()
-insertAlias c (NE.toList -> ts) = do
-        stmt <- prepare c "INSERT INTO alias VALUES (?, ?)"
-        executeMany stmt $ map (\(appID, realAppID) -> [toSql appID, toSql realAppID])
-                         $ filter (uncurry (/=))
-                         $ map (second realAppID) ts
+insertAlias c (NE.toList -> ts) = insertMany c (Table "alias" 2) $ map (\(appID, realAppID) -> [toSql appID, toSql realAppID])
+                                                                 $ filter (uncurry (/=))
+                                                                 $ map (second realAppID) ts
 
 insertBlackList :: IConnection c => c -> NE.NonEmpty String -> IO Integer
 insertBlackList c (NE.toList -> ns) = run c query $ map toSql ns
@@ -110,6 +97,19 @@ insertBlackList c (NE.toList -> ns) = run c query $ map toSql ns
             \WHERE games.name LIKE inputs.name;"
             -- TODO what if rows already exist?
 
+-- | Finds all entries in the database which do not have details.
+queryIncompleteAppIDs :: IConnection c => c -> NE.NonEmpty String -> IO [Int]
+queryIncompleteAppIDs c (NE.toList -> ns) = do
+    fmap (fromSql . head) <$> quickQuery' c query (toSql <$> ns)
+  where
+    query = "WITH inputs(name) as (\
+                \VALUES " ++ placeholders ns ++ "\
+            \) \
+            \SELECT g.appid \
+            \FROM games AS g, inputs AS i \
+            \WHERE g.name LIKE i.name \
+                  \AND g.appid NOT IN (SELECT d.appid FROM details AS d) \
+            \EXCEPT SELECT * FROM blacklist;"
 
 queryMatchingGames :: IConnection c => c -> NE.NonEmpty String -> IO [(Int, String, Maybe Int)]
 queryMatchingGames c (NE.toList -> ns) = 

@@ -18,3 +18,6 @@ updateOwnedGames c sid = do
     case optOGL of
         Right ogl -> Right <$> insertOwnedGames c ogl
         Left e    -> return $ Left e
+
+shopURL :: Int -> String
+shopURL appID = "http://store.steampowered.com/app/" ++ show appID ++ "/"
