@@ -1,5 +1,20 @@
 {-# LANGUAGE ViewPatterns #-}
-module Steam.Database where
+module Steam.Database
+    ( resetDB
+    , resetGamesDB
+    , resetDetailsDB
+    , resetAliasDB
+    , resetOwnedGamesDB
+    , resetBlacklistDB
+    , insertGames
+    , insertOwnedGames
+    , insertDetails
+    , insertAlias
+    , insertBlackList
+    , queryIncompleteAppIDs
+    , queryMatchingGames
+    , queryAppID
+    ) where
 
 import           Data.Bifunctor
 import           Data.List
@@ -65,6 +80,12 @@ data Table = Table
            , numCols :: Int
            }
 
+games, ownedGames, details, alias :: Table
+games      = Table "games" 2
+ownedGames = Table "owned_games" 1
+details    = Table "details" 3
+alias      = Table "alias" 2
+
 insertMany :: IConnection c => c -> Table -> [[SqlValue]] -> IO ()
 insertMany c (Table name numCols) vs = do
     stmt <- prepare c $ "INSERT INTO " ++ name ++ " VALUES (" ++ intercalate "," (replicate numCols "?") ++ ")"
@@ -72,18 +93,18 @@ insertMany c (Table name numCols) vs = do
     finish stmt
 
 insertGames :: IConnection c => c -> GameEntryList -> IO ()
-insertGames c (GameEntryList ges) = insertMany c (Table "games" 2) $ map (\(GameEntry i n) -> [toSql i, toSql n]) ges
+insertGames c (GameEntryList ges) = insertMany c games $ map (\(GameEntry i n) -> [toSql i, toSql n]) ges
 
 insertOwnedGames :: IConnection c => c -> OwnedGameList -> IO ()
-insertOwnedGames c (OwnedGameList ogs) = insertMany c (Table "owned_games" 1) $ map (\(OwnedGame i) -> [toSql i]) ogs
+insertOwnedGames c (OwnedGameList ogs) = insertMany c ownedGames $ map (\(OwnedGame i) -> [toSql i]) ogs
 
 insertDetails :: IConnection c => c -> NE.NonEmpty (Int, GameInfo) -> IO ()
-insertDetails c (NE.toList -> ts) = insertMany c (Table "details" 3) $ map (\(appID, gi) -> [toSql appID, toSql $ if linux gi then 1 :: Int else 0, toSql $ optMCScore gi]) ts
+insertDetails c (NE.toList -> ts) = insertMany c details $ map (\(appID, gi) -> [toSql appID, toSql $ if linux gi then 1 :: Int else 0, toSql $ optMCScore gi]) ts
 
 insertAlias :: IConnection c => c -> NE.NonEmpty (Int, GameInfo) -> IO ()
-insertAlias c (NE.toList -> ts) = insertMany c (Table "alias" 2) $ map (\(appID, realAppID) -> [toSql appID, toSql realAppID])
-                                                                 $ filter (uncurry (/=))
-                                                                 $ map (second realAppID) ts
+insertAlias c (NE.toList -> ts) = insertMany c alias $ map (\(appID, realAppID) -> [toSql appID, toSql realAppID])
+                                                     $ filter (uncurry (/=))
+                                                     $ map (second realAppID) ts
 
 insertBlackList :: IConnection c => c -> NE.NonEmpty String -> IO Integer
 insertBlackList c (NE.toList -> ns) = run c query $ map toSql ns
@@ -92,7 +113,7 @@ insertBlackList c (NE.toList -> ns) = run c query $ map toSql ns
                 \VALUES " ++ placeholders ns ++ "\
             \) \
             \INSERT INTO blacklist \
-            \SELECT games.appid \
+            \SELECT DISTINCT games.appid \
             \FROM games, inputs \
             \WHERE games.name LIKE inputs.name;"
             -- TODO what if rows already exist?
@@ -105,7 +126,7 @@ queryIncompleteAppIDs c (NE.toList -> ns) = do
     query = "WITH inputs(name) as (\
                 \VALUES " ++ placeholders ns ++ "\
             \) \
-            \SELECT g.appid \
+            \SELECT DISTINCT g.appid \
             \FROM games AS g, inputs AS i \
             \WHERE g.name LIKE i.name \
                   \AND g.appid NOT IN (SELECT d.appid FROM details AS d) \
@@ -118,7 +139,7 @@ queryMatchingGames c (NE.toList -> ns) =
     query = "WITH inputs(name) as (\
                 \VALUES " ++ placeholders ns ++ "\
             \) \
-            \SELECT games.appid, games.name, details.metacritic_score \
+            \SELECT DISTINCT games.appid, games.name, details.metacritic_score \
             \FROM games, details, inputs \
             \WHERE inputs.name LIKE games.name \
                    \AND games.appid = details.appid \
