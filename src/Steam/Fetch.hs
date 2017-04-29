@@ -7,8 +7,7 @@ import           Data.List
 import           Data.Maybe
 import           Network.Download
 import           Text.Read
-import           Text.XML.Light.Proc
-import           Text.XML.Light.Types
+import           Text.XML.Light
 
 import           Steam.Types
 
@@ -28,16 +27,24 @@ urlOwnedGameList apiKey steamID64 =
 data SteamID = SteamID String
              | SteamID64 String
 
+communityUrlPrefix :: String
+communityUrlPrefix = "http://steamcommunity.com/"
+
+communityUrlInfix :: SteamID -> String
+communityUrlInfix sid = case sid of
+    SteamID s   -> "id/" ++ s
+    SteamID64 s -> "profiles/" ++ s
+
+communityUrl :: SteamID -> String -> String
+communityUrl sid postfix = communityUrlPrefix ++ communityUrlInfix sid ++ '/' : postfix
+
+urlWishlistHTML :: SteamID -> String
+urlWishlistHTML sid = communityUrl sid "wishlist"
+
 -- | Fetch the list of owned games from the steam community public site as XML.
 -- This list contains also free games.
 urlOwnedGameListXML :: SteamID -> String
-urlOwnedGameListXML sid = urlPrefix ++ urlInfix sid ++ urlPostfix
-  where
-    urlPrefix    = "http://steamcommunity.com/"
-    urlPostfix   = "/games?tab=all&xml=1"
-    urlInfix sid = case sid of
-        SteamID s   -> "id/" ++ s
-        SteamID64 s -> "profile/" ++ s
+urlOwnedGameListXML sid = communityUrl sid "games?tab=all&xml=1"
 -- TODO can also be used to resolve SteamID64 from SteamID: "gamesList/steamID", "gamesList/steamID64"
 
 fetchJSON :: FromJSON a => String -> IO (Either String a)
@@ -61,10 +68,63 @@ fetchOwnedGameListXML sid =
     parseXML cs = case parseAppIDs cs of
         Just ts -> Right $ OwnedGameList $ map OwnedGame ts
         Nothing -> Left "failed to parse XML"
-    strQName s = blank_name { qName = s }
-    findChildStr = findChild . strQName
+    findChildStr = findChild . unqual
     parseAppIDs = find ((== "gamesList") . qName . elName) . onlyElems
                   >=> findChildStr "games"
                   >=> mapM (findChildStr "appID" >=> readMaybe . strContent)
-                      . findChildren (strQName "game")
+                      . findChildren (unqual "game")
+
+fetchWishlistHTML :: SteamID -> IO (Either String GameEntryList)
+fetchWishlistHTML sid = (>>= parseHTML) <$> openAsXML (urlWishlistHTML sid)
+  where
+    parseHTML cs = case parseRows cs of
+        Just ges -> Right ges
+        Nothing  -> Left "failed to parse HTML"
+    {-
+        html
+        body
+        div.responsive_page_frame with_header
+        div.responsive_page_content
+        div.responsive_page_template_content
+        div.pagecontent no_header
+        div#BG_bottom
+        div#mainContents
+        div#tabs_basebg
+        div#wishlist_items
+            div#wishListRow -> appid in id attribute with format game_<appid>
+                div#wishListRowItem
+                    h4#ellipsis -> game name
+    -}
+    parseRows = find ((== "html") . qName . elName) . onlyElems
+                >=> findChildStr "body"
+                >=> classSeq [ "responsive_page_frame with_header"
+                             , "responsive_page_content"
+                             , "responsive_page_template_content"
+                             , "pagecontent no_header"
+                             ]
+                >=> idSeq [ "BG_bottom"
+                          , "mainContents"
+                          , "tabs_basebg"
+                          , "wishlist_items"
+                          ]
+                >=> fmap GameEntryList
+                  . mapM parseRow
+                  -- Work arround bug in 'xml' with space at the end.
+                  . filterChildren (isDivWithAttr "class" "wishlistRow ")
+
+    classSeq = foldr (\c r -> divChildWithClass c >=> r) pure
+    idSeq = foldr (\c r -> divChildWithId c >=> r) pure
+    findChildStr = findChild . unqual
+    divChildWithId = divChildWithAttr "id"
+    divChildWithClass = divChildWithAttr "class"
+    divChildWithAttr a v = filterChild (isDivWithAttr a v)
+    isDivWithAttr a v e =
+        elName e == unqual "div"
+        && Attr (unqual a) v `elem` elAttribs e
+
+    parseRow e = do
+        'g' : 'a' : 'm' : 'e' : '_' : appIDStr <- findAttr (unqual "id") e
+        appID <- readMaybe appIDStr
+        h4 <- divChildWithClass "wishlistRowItem" e >>= findChild (unqual "h4")
+        pure $ GameEntry appID (strContent h4)
 
