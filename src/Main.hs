@@ -8,19 +8,18 @@ import           Data.Either
 import           Data.Functor
 import           Data.List
 import           Data.List.Split
-import qualified Data.List.NonEmpty             as NE
 import           Data.Maybe
-import           Database.HDBC.Sqlite3
 import           Database.HDBC
+import           Database.HDBC.Sqlite3
+import           System.Console.ANSI
 import           System.Directory
 import           System.Environment
 import           System.Environment.XDG.BaseDir
 import           System.Exit
-import qualified System.IO.Strict               as IOS
 import           System.IO
-import           System.Console.ANSI
-
-import           IniConfig
+import           Text.Config.Ini
+import qualified Data.List.NonEmpty             as NE
+import qualified System.IO.Strict               as IOS
 
 import           Steam.Database
 import           Steam.Fetch
@@ -144,8 +143,8 @@ prog sid optDBPath defDBPath = do
     toErrorCols (appID, err)        = [show appID, err]
 
     colorDullBlack s                = setSGRCode [SetColor Background Dull Black] ++ s ++ setSGRCode []
-    putTableAlt specs f rs          = mapM_ putStrLnIndent $ altLines [colorDullBlack, id] $ layoutToLines (map f rs) specs
-    putTableCheckered specs f rs    = mapM_ (putStrLnIndent . unwords) $ checkeredCells colorDullBlack id $ layoutToCells (map f rs) specs
+    putTableAlt specs f rs          = mapM_ putStrLnIndent $ altLines [colorDullBlack, id] $ gridLines specs (map f rs)
+    putTableCheckered specs f rs    = mapM_ (putStrLnIndent . unwords) $ checkeredCells colorDullBlack id $ grid specs (map f rs)
 
     putStrLnIndent                  = putStrLn . ("    " ++)
 
@@ -159,7 +158,7 @@ prog sid optDBPath defDBPath = do
     -- action with it afterwars.
     promptGamesList tWidth pf verb act = do
             putStrLn $ "Paste games to " ++ verb ++ " for and hit CTRL + D on a new line."
-            games <- pf <$> getInputList'
+            games <- IOS.run $ pf <$> getInputList'
             case NE.nonEmpty games of
                 Just someGames -> do
                     let msg = "Games to " ++ verb ++ " (" ++ show (length games) ++ "):"
