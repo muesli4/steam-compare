@@ -190,7 +190,6 @@ processDetails c appIDs = do
     return res
   where
     processBatch batch = do
-        -- TODO add dots as indicator
         res <- forM batch $ \appID -> do
             let f = (,) appID
             r <- bimap f f <$> fetchGameInfo appID
