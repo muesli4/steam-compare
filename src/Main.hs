@@ -24,6 +24,7 @@ import qualified System.IO.Strict               as IOS
 import           Steam.Database
 import           Steam.Fetch
 import           Steam.Types
+import           Steam.URL
 import           Steam
 
 import           Text.Layout.Table
@@ -94,8 +95,8 @@ prog sid optDBPath defDBPath = do
     args <- getArgs
     case args of
         ["update"]      -> progUpdate c sid
-        ["appid", game] -> queryAppID c game >>= putTableAlt [def, numCol, def] (\(n, i) -> [n, show i, shopURL i])
-        ["blacklist"]   -> do
+        ["appid", game] -> queryAppID c game >>= putTableAlt [def, numCol, def] (\(n, i) -> [n, show i, urlShop i])
+        ["blacklist"]   ->
             promptGamesList' id "blacklist" $ \someGames -> do
                 i <- insertBlackList c someGames
                 commit c
@@ -139,7 +140,7 @@ prog sid optDBPath defDBPath = do
   where
     -- Outputting data
     toResultCols (appID, name, mMC) = let mc = maybe "" show mMC
-                                      in [name, mc, shopURL appID]
+                                      in [name, mc, urlShop appID]
     toErrorCols (appID, err)        = [show appID, err]
 
     colorDullBlack s                = setSGRCode [SetColor Background Dull Black] ++ s ++ setSGRCode []

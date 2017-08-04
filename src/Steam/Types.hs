@@ -10,12 +10,16 @@ import qualified Data.HashMap.Strict as HM
 import qualified Data.Text           as T
 import           GHC.Generics
 
+-- | Specifies a valid steam identification.
+data SteamID = SteamID String
+             | SteamID64 String
+
 data GameEntry = GameEntry
                { appid    :: Int
                , name     :: String
-               } deriving Generic
+               } deriving (Generic, Show)
 
-newtype GameEntryList = GameEntryList [GameEntry]
+newtype GameEntryList = GameEntryList [GameEntry] deriving Show
 
 data GameInfo = GameInfo
               { linux      :: Bool

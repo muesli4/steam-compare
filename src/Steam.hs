@@ -1,9 +1,11 @@
+-- TODO rename and move module, combines fetching and inserting
 module Steam where
 
 import Database.HDBC
 
 import Steam.Database
 import Steam.Fetch
+import Steam.Types    (SteamID(..))
 
 updateGames :: IConnection c => c -> IO (Either String ())
 updateGames c = do
@@ -18,6 +20,3 @@ updateOwnedGames c sid = do
     case optOGL of
         Right ogl -> Right <$> insertOwnedGames c ogl
         Left e    -> return $ Left e
-
-shopURL :: Int -> String
-shopURL appID = "http://store.steampowered.com/app/" ++ show appID ++ "/"
