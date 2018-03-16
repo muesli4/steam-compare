@@ -12,7 +12,7 @@ import           System.Exit
 
 import           Steam.Core.Types
 import           Steam.Action
-
+import           Steam.CLI
 
 -- TODO progress bar while fetching ?
 
@@ -21,14 +21,13 @@ firstExistingFile = firstM doesFileExist
 
 main :: IO ()
 main = do
-    -- Read config.
-    userConfig <- getUserConfigFile progName cfgName
-    -- Read from local config first, but prefer XDG user dir instead.
-    optConfigPath <- firstExistingFile [cfgName, userConfig]
+    ProgramArgs optCfgOverride pa <- parseProgArgs
+
+    optConfigPath <- getConfigFile optCfgOverride
 
     case optConfigPath of
-        Nothing         -> die $ "missing configuration file: " ++ userConfig
-        Just configPath -> do
+        Left configPath  -> die $ "missing configuration file: " ++ configPath
+        Right configPath -> do
             optConfig <- readConfigFile configPath
             case optConfig of
                 Left e               -> die $ "invalid configuration file format: " ++ e
@@ -38,29 +37,31 @@ main = do
                         Just sid -> do
                             userDB <- getUserDataFile progName dbName
                             optDBPath <- firstExistingFile [dbName, userDB]
-                            prog $ ProgramInfo sid optDBPath userDB
+                            prog (ProgramInfo sid optDBPath userDB) pa
   where
     cfgName  = "default-user.conf"
     dbName   = "default-user.db"
     progName = "steam-compare"
 
-prog :: ProgramInfo -> IO ()
-prog pi@(ProgramInfo sid optDBPath defDBPath) = do
+    getConfigFile optOverride = case optOverride of
+        Just p  -> tryPaths p [p]
+        Nothing -> do
+            userConfig <- getUserConfigFile progName cfgName
+
+            -- Pick local if exists, otherwise pick user config.
+            tryPaths userConfig [cfgName, userConfig]
+
+    tryPaths reportedPath ps = maybe (Left reportedPath) Right <$> firstExistingFile ps
+
+prog :: ProgramInfo -> ProgramAction -> IO ()
+prog pi@(ProgramInfo sid optDBPath defDBPath) pa = do
     c <- connectSqlite3 dbPath
     dbInitAction c
-
-    args <- getArgs
-    case args of
-        ["update"]      -> progUpdate c sid
-        ["appid", game] -> progQueryAppID c game
-        ["blacklist"]   -> progBlacklist c
-        "match" : r     -> do
-            let lineMod = case r of
-                    []         -> id
-                    cutSeq : _ -> head . splitOn cutSeq
-            progMatch c lineMod
-        _               -> putStrLn "Invalid command."
-
+    case pa of
+        Update          -> progUpdate c sid
+        QueryAppID game -> progQueryAppID c game
+        Blacklist       -> progBlacklist c
+        Match optDelim  -> progMatch c $ maybe id (\d -> head . splitOn d) optDelim
     disconnect c
   where
     (dbInitAction, dbPath) = progDBInfo pi
