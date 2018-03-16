@@ -1,5 +1,5 @@
 {-# LANGUAGE ViewPatterns #-}
-module Steam.Database
+module Steam.Core.Database
     ( resetDB
     , resetGamesDB
     , resetDetailsDB
@@ -22,7 +22,7 @@ import qualified Data.List.NonEmpty as NE
 import           Data.Maybe
 import           Database.HDBC
 
-import           Steam.Types
+import           Steam.Core.Types
 
 placeholder :: String
 placeholder = "(?)"

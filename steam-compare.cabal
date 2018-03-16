@@ -10,7 +10,7 @@ name:                steam-compare
 -- PVP summary:      +-+------- breaking API changes
 --                   | | +----- non-breaking API additions
 --                   | | | +--- code changes with no API change
-version:             0.1.0.1
+version:             0.2.0.0
 
 -- A short (one-line) description of the package.
 synopsis:            Manages a local and limited version of the Steam database and allows to match and blacklist unowned games.
@@ -54,7 +54,11 @@ executable steam-compare
   main-is:             Main.hs
   
   -- Modules included in this executable, other than Main.
-  -- other-modules:       
+  other-modules:       Steam.Core.Database,
+                       Steam.Core.Fetch,
+                       Steam.Core.Types,
+                       Steam.Core.URL,
+                       Steam.Update
   
   -- LANGUAGE extensions used by modules in this package.
   other-extensions:    ViewPatterns, DeriveGeneric, OverloadedStrings

@@ -1,11 +1,11 @@
 -- TODO rename and move module, combines fetching and inserting
-module Steam where
+module Steam.Update where
 
 import Database.HDBC
 
-import Steam.Database
-import Steam.Fetch
-import Steam.Types    (SteamID(..))
+import Steam.Core.Database
+import Steam.Core.Fetch
+import Steam.Core.Types    (SteamID(..))
 
 updateGames :: IConnection c => c -> IO (Either String ())
 updateGames c = do

@@ -1,7 +1,7 @@
 -- | Provides tools to construct steam URLs.
-module Steam.URL where
+module Steam.Core.URL where
 
-import Steam.Types (SteamID(..))
+import Steam.Core.Types (SteamID(..))
 
 urlShop :: Int -> String
 urlShop appID = "http://store.steampowered.com/app/" ++ show appID ++ "/"

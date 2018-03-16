@@ -1,7 +1,7 @@
 {-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedStrings #-}
-module Steam.Types where
+module Steam.Core.Types where
 
 import           Control.Applicative
 import           Data.Aeson

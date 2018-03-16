@@ -21,11 +21,11 @@ import           Text.Config.Ini
 import qualified Data.List.NonEmpty             as NE
 import qualified System.IO.Strict               as IOS
 
-import           Steam.Database
-import           Steam.Fetch
-import           Steam.Types
-import           Steam.URL
-import           Steam
+import           Steam.Core.Database
+import           Steam.Core.Fetch
+import           Steam.Core.Types
+import           Steam.Core.URL
+import           Steam.Update
 
 import           Text.Layout.Table
 import qualified System.Console.Terminal.Size as T
@@ -71,6 +71,8 @@ handleEither c failAct successAct r = case r of
 -- | Update owned games of a steam user.
 progUpdate :: IConnection c => c -> SteamID -> IO ()
 progUpdate c sid = resetOwnedGamesDB c >> updateOwnedGames c sid >>= handleEither c putErrStrLn (commit c)
+
+
 
 prog :: SteamID -> Maybe FilePath -> String -> IO ()
 prog sid optDBPath defDBPath = do
