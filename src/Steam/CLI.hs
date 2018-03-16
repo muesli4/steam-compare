@@ -36,11 +36,12 @@ progArgsP = ProgramArgs <$> optional cfgP <*> progActP
 
 progActP :: Parser ProgramAction
 progActP = hsubparser $
-    metavar "COMMAND"
-    <> command "update" (info (pure Update) (progDesc "Update databases."))
-    <> command "appid" (info queryAppIDP (progDesc "Query for the appid of a game."))
-    <> command "blacklist" (info (pure Blacklist) (progDesc blacklistDesc))
-    <> command "match" (info matchP (progDesc "Find matches in a list of games."))
+    foldr (\(n, p, d) r -> command n (info p (progDesc d)) <> r) (metavar "COMMAND")
+    [ ("update"   , pure Update   , "Update applications and owned games")
+    , ("appid"    , queryAppIDP   , "Query for appid of a game")
+    , ("blacklist", pure Blacklist, blacklistDesc)
+    , ("match"    , matchP        , "Find matches in a list of games")
+    ]
   where
     blacklistDesc = "Hide games that should not appear in future matching."
 
@@ -50,4 +51,4 @@ queryAppIDP = QueryAppID <$> strArgument (help "The name of a game" <> metavar "
 matchP :: Parser ProgramAction
 matchP = Match <$> optional delimP
   where
-    delimP = strArgument (help "The character sequence to cut after." <> metavar "DELIM")
+    delimP = strArgument (help "The character sequence to cut after" <> metavar "DELIM")
