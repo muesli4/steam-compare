@@ -58,7 +58,9 @@ executable steam-compare
                        Steam.Core.Fetch,
                        Steam.Core.Types,
                        Steam.Core.URL,
-                       Steam.Update
+                       Steam.Action,
+                       Steam.Update,
+                       Steam.Util
   
   -- LANGUAGE extensions used by modules in this package.
   other-extensions:    ViewPatterns, DeriveGeneric, OverloadedStrings
