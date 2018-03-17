@@ -13,18 +13,21 @@ import Steam.Core.Database.Types
 
 data ProgramArgs
     = ProgramArgs
-    { paOptConfigPath :: Maybe String
-    , paProgramAction :: ProgramAction
+    { paConfigOverride :: Maybe FilePath
+    , paDbOverride     :: Maybe FilePath
+    , paProgramAction  :: ProgramAction
     } deriving Show
 
 data MatchAction
     = QueryAppID String
     | Blacklist
     | Match 
+    | ReplaceWithLinks
     deriving Show
 
 data ProgramAction
     = Update
+    | DumpBlacklist
     | MatchAction
     { maPrefs      :: MatchPrefs
     , maTrimSpaces :: Bool
@@ -42,21 +45,26 @@ progArgsPI = info (progArgsP <**> helper) (progDesc desc)
            \own with your criteria."
 
 progArgsP :: Parser ProgramArgs
-progArgsP = ProgramArgs <$> optional cfgP <*> progActP
+progArgsP = ProgramArgs <$> optional cfgP <*> optional dbP <*> progActP
   where
-    cfgP    = strOption $ long "config"
-                          <> short 'c'
-                          <> metavar "CONFIG_PATH"
-                          <> help cfgDesc
-    cfgDesc = "Override default configuration file"
+    cfgP = strOption $ long "config-file"
+                       <> short 'c'
+                       <> metavar "CONFIG_PATH"
+                       <> help "Override default configuration file"
+    dbP  = strOption $ long "database-file"
+                       <> short 'd'
+                       <> metavar "DATABASE_PATH"
+                       <> help "Override default database file"
 
 progActP :: Parser ProgramAction
 progActP = hsubparser $
     foldr (\(n, p, d) r -> command n (info p (progDesc d)) <> r) (metavar "COMMAND")
-    [ ("update"   , pure Update                  , "Update applications and owned games")
-    , ("appid"    , matchActionP queryAppIDP     , "Query for appid of a game")
-    , ("blacklist", matchActionP $ pure Blacklist, blacklistDesc)
-    , ("match"    , matchActionP $ pure Match    , "Find matches in a list of games")
+    [ ("update"            , pure Update                  , "Update applications and owned games")
+    , ("dump-blacklist"    , pure DumpBlacklist           , "Dump the blacklist")
+    , ("appid"             , matchActionP queryAppIDP     , "Query for appid of a game")
+    , ("blacklist"         , matchActionP $ pure Blacklist, blacklistDesc)
+    , ("match"             , matchActionP $ pure Match    , "Find matches in a list of games")
+    , ("replace-with-links", matchActionP $ pure ReplaceWithLinks , "Replace game names with corresponding Steam store links if found")
     ]
   where
     blacklistDesc = "Hide games that should not appear in future matching."

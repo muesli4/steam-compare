@@ -14,6 +14,8 @@ module Steam.Core.Database
     , queryIncompleteAppIDs
     , queryMatchingGames
     , queryAppID
+    , queryUniqueAppIDs
+    , queryBlacklist
     , module Steam.Core.Database.Types
     ) where
 
@@ -121,8 +123,8 @@ insertBlackList c mp (NE.toList -> ns) = run c query $ map toSql ns
             \WHERE " ++ predicate mp "games.name" "inputs.name" ++ ";"
 
 -- | Finds all entries in the database which do not have details.
-queryIncompleteAppIDs :: IConnection c => c -> NE.NonEmpty String -> IO [Int]
-queryIncompleteAppIDs c (NE.toList -> ns) =
+queryIncompleteAppIDs :: IConnection c => c -> MatchPrefs -> NE.NonEmpty String -> IO [Int]
+queryIncompleteAppIDs c mp (NE.toList -> ns) =
     fmap (fromSql . head) <$> quickQuery' c query (toSql <$> ns)
   where
     query = "WITH inputs(name) as (\
@@ -130,7 +132,7 @@ queryIncompleteAppIDs c (NE.toList -> ns) =
             \) \
             \SELECT DISTINCT g.appid \
             \FROM games AS g, inputs AS i \
-            \WHERE g.name LIKE i.name \
+            \WHERE " ++ predicate mp "g.name" "i.name" ++ " \
                   \AND g.appid NOT IN (SELECT d.appid FROM details AS d) \
             \EXCEPT SELECT * FROM blacklist;"
 
@@ -185,3 +187,24 @@ queryAppID :: IConnection c => c -> MatchPrefs -> String -> IO [(String, Int)]
 queryAppID c mp game = map (\[n, i] -> (fromSql n, fromSql i)) <$> quickQuery' c query [toSql game]
   where
     query = "SELECT name, appid FROM games WHERE " ++ predicate mp "name" "(?1)"
+
+-- | Lookup games in a list and replace found games with exactly one match by
+-- their appid.
+queryUniqueAppIDs :: IConnection c => c -> MatchPrefs -> NE.NonEmpty String -> IO [(String, Maybe (String, Int))]
+queryUniqueAppIDs c mp (NE.toList -> ns) = map (\[o, n, i] -> (fromSql o, (,) <$> fromSql n <*> fromSql i)) <$> quickQuery' c query (toSql <$> ns)
+  where
+    query = "WITH inputs(name) as (\
+                \VALUES " ++ placeholders ns ++ "\
+            \), found(input_name, name, appid) as (\
+                \SELECT inputs.name, games.name, games.appid \
+                \FROM inputs, games \
+                \WHERE " ++ predicate mp "inputs.name" "games.name" ++ " \
+                \GROUP BY inputs.name \
+                \HAVING COUNT(DISTINCT games.appid) = 1\
+            \)\
+            \SELECT i.name, f.name, f.appid \
+            \FROM inputs i LEFT OUTER JOIN found f ON i.name = f.input_name\
+            \"
+
+queryBlacklist :: IConnection c => c -> IO [String]
+queryBlacklist c = map (\[c] -> fromSql c) <$> quickQuery' c "SELECT g.name FROM blacklist b, games g WHERE g.appid = b.appid" []

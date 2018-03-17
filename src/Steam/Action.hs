@@ -6,6 +6,8 @@ module Steam.Action
     , progQueryAppID
     , progBlacklist
     , progMatch
+    , progReplaceWithLinks
+    , progDumpBlacklist
     ) where
 
 import           Control.Concurrent
@@ -38,15 +40,15 @@ type InputMod = String -> String
 
 data ProgramInfo
     = ProgramInfo
-    { piSID :: SteamID
-    , piOptDBPath :: Maybe String
-    , piDefDBPath :: String
+    { piSID    :: SteamID
+    , piDbFile :: Either FilePath FilePath
     }
 
 progDBInfo :: IConnection c => ProgramInfo -> (c -> IO (), String)
-progDBInfo (ProgramInfo sid optDBPath fallbackPath) = case optDBPath of
-    Nothing -> (initDB, fallbackPath)
-    Just p  -> (const $ pure (), p)
+progDBInfo (ProgramInfo sid dbFile) = case dbFile of
+    -- Create a new database.
+    Left p  -> (initDB, p)
+    Right p -> (const $ pure (), p)
   where
     -- TODO replace die with some escape mechanism like continuations?
     initDB c = do
@@ -56,6 +58,7 @@ progDBInfo (ProgramInfo sid optDBPath fallbackPath) = case optDBPath of
         secure $ updateOwnedGames c sid
         commit c
 
+-- TODO necessary?
 -- | Update owned games of a steam user.
 progUpdate :: IConnection c => c -> SteamID -> IO ()
 progUpdate c sid = resetOwnedGamesDB c >> updateOwnedGames c sid >>= handleEither c putErrStrLn (commit c)
@@ -113,29 +116,37 @@ promptGamesList inputLineMod verb act = do
         mapM_ (putStrLnIndent . unwords) $ checkeredCells colorDullBlack id
                                          $ grid specs (map f rs)
 
+
 progBlacklist :: IConnection c => c -> MatchPrefs -> InputMod -> IO ()
 progBlacklist c mp inputMod = promptGamesList inputMod "blacklist" $ \someGames -> do
     i <- insertBlackList c mp someGames
     commit c
     putStrLn $ "Added " ++ show i ++ " entries."
 
+promptGamesListAndFetchDetails :: IConnection c => c -> MatchPrefs -> InputMod -> String -> (NE.NonEmpty String -> IO ()) -> IO ()
+promptGamesListAndFetchDetails c mp inputMod verb act =
+    promptGamesList inputMod verb $ \someGames -> do
+        putStrLn "Querying games ..."
+        ids <- queryIncompleteAppIDs c mp someGames
+        case ids of
+            []        -> return ()
+            _         -> do
+                putStrLn $ "Found missing details for appids: "
+                            ++ intercalate ", " (map show ids)
+                putStr "Fetching missing details "
+                es <- processDetails c ids
+                case es of
+                    [] -> return ()
+                    _  -> do
+                        putStrLn "Errors occured:"
+                        putTableAltWith [def, def] toErrorCols es
+                commit c
+        act someGames
+  where
+    toErrorCols (appID, err)        = [show appID, err]
+
 progMatch :: IConnection c => c -> MatchPrefs -> InputMod -> IO ()
-progMatch c mp inputMod = promptGamesList inputMod "match" $ \someGames -> do
-    putStrLn "Querying games ..."
-    ids <- queryIncompleteAppIDs c someGames
-    case ids of
-        []        -> return ()
-        _         -> do
-            putStrLn $ "Found missing details for appids: "
-                        ++ intercalate ", " (map show ids)
-            putStr "Fetching missing details "
-            es <- processDetails c ids
-            case es of
-                [] -> return ()
-                _  -> do
-                    putStrLn "Errors occured:"
-                    putTableAltWith [def, def] toErrorCols es
-            commit c
+progMatch c mp inputMod = promptGamesListAndFetchDetails c mp inputMod "match" $ \someGames -> do
     putStrLn "Matching input ..."
     res <- queryMatchingGames c mp someGames
     case res of
@@ -149,11 +160,9 @@ progMatch c mp inputMod = promptGamesList inputMod "match" $ \someGames -> do
                             ]
                             toResultCols
                             res
-
   where
     -- Outputting data
     toResultCols (appID, name, mMC) = [name, maybe "" show mMC, urlShop appID]
-    toErrorCols (appID, err)        = [show appID, err]
 
 processDetails :: IConnection c => c -> [Int] -> IO [(Int, String)]
 processDetails c appIDs = do
@@ -190,3 +199,12 @@ processDetails c appIDs = do
     waitFiveMinutes = replicateM (60 * 5) $ putStr "." >> threadDelay oneSecond
     
     oneSecond = 1000 * 1000
+
+progReplaceWithLinks :: IConnection c => c -> MatchPrefs -> InputMod -> IO ()
+progReplaceWithLinks c mp inputMod = promptGamesListAndFetchDetails c mp inputMod "replace links" $ \someGames ->
+    putStrLn "" >> queryUniqueAppIDs c mp someGames >>= mapM_ (putStrLn . uncurry toStr)
+  where
+    toStr input = maybe input (\(game, appid) -> '[' : game ++ "](" ++ urlGameInfo appid ++ ")")
+
+progDumpBlacklist :: IConnection c => c -> IO ()
+progDumpBlacklist c = queryBlacklist c >>= mapM_ putStrLn
