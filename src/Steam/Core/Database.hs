@@ -58,7 +58,7 @@ resetDetailsDB c = runRaw c query
     query = mergeQ [ "DROP TABLE IF EXISTS details"
                    , "CREATE TABLE details (appid int primary key, linux int not null, metacritic_score int)"
                    ]
-        
+
 resetAliasDB :: IConnection c => c -> IO ()
 resetAliasDB c = runRaw c query
   where
@@ -154,7 +154,7 @@ predForMatchMode m = case m of
     Exact        -> equal
     PartialLeft  -> partial
     PartialRight -> flip partial
-    PartialBoth  -> \ls rs -> partial ls rs ++ " OR " ++ partial rs ls
+    PartialBoth  -> \ls rs -> '(' : partial ls rs ++ " OR " ++ partial rs ls ++ ")"
     Wildcard     -> like
   where
     equal ls rs   = ls ++ " = " ++ rs
@@ -174,7 +174,7 @@ queryMatchingGames c mp (NE.toList -> ns) =
             \) \
             \SELECT DISTINCT games.appid, games.name, details.metacritic_score \
             \FROM games, details, inputs \
-            \WHERE " ++ predicate mp "inputs.name" "games.name" ++ "\
+            \WHERE " ++ predicate mp "games.name" "inputs.name" ++ "\
                    \AND games.appid = details.appid \
                    \AND games.appid NOT IN owned_games \
                    \AND games.appid NOT IN blacklist \
@@ -191,19 +191,26 @@ queryAppID c mp game = map (\[n, i] -> (fromSql n, fromSql i)) <$> quickQuery' c
 -- | Lookup games in a list and replace found games with exactly one match by
 -- their appid.
 queryUniqueAppIDs :: IConnection c => c -> MatchPrefs -> NE.NonEmpty String -> IO [(String, Maybe (String, Int))]
-queryUniqueAppIDs c mp (NE.toList -> ns) = map (\[o, n, i] -> (fromSql o, (,) <$> fromSql n <*> fromSql i)) <$> quickQuery' c query (toSql <$> ns)
+queryUniqueAppIDs c mp (NE.toList -> ns) =
+    map (\[o, n, i] -> (fromSql o, (,) <$> fromSql n <*> fromSql i)) <$> quickQuery' c query (toSql <$> ns)
   where
+    -- Use exact match if it exists.
     query = "WITH inputs(name) as (\
                 \VALUES " ++ placeholders ns ++ "\
             \), found(input_name, name, appid) as (\
                 \SELECT inputs.name, games.name, games.appid \
                 \FROM inputs, games \
-                \WHERE " ++ predicate mp "inputs.name" "games.name" ++ " \
+                \WHERE " ++ predicate mp "games.name" "inputs.name" ++ " \
                 \GROUP BY inputs.name \
                 \HAVING COUNT(DISTINCT games.appid) = 1\
+            \), found_exact(input_name, exact_appid) as (\
+                \SELECT inputs.name, games.appid \
+                \FROM inputs, games \
+                \WHERE inputs.name = games.name \
             \)\
-            \SELECT i.name, f.name, f.appid \
-            \FROM inputs i LEFT OUTER JOIN found f ON i.name = f.input_name\
+            \SELECT i.name, COALESCE(e.input_name, f.name), COALESCE(e.exact_appid, f.appid) \
+            \FROM (inputs i LEFT OUTER JOIN found_exact e ON i.name = e.input_name) LEFT OUTER JOIN found f \
+                  \ON i.name = f.input_name\
             \"
 
 queryBlacklist :: IConnection c => c -> IO [String]
