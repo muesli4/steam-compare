@@ -67,7 +67,7 @@ progActP = hsubparser $
     , ("replace-with-links", matchActionP $ pure ReplaceWithLinks , "Replace game names with corresponding Steam store links if found")
     ]
   where
-    blacklistDesc = "Hide games that should not appear in future matching."
+    blacklistDesc = "Hide games that should not appear in future matching"
 
 matchActionP :: Parser MatchAction -> Parser ProgramAction
 matchActionP p =
