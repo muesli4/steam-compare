@@ -10,6 +10,7 @@ data MatchMode
     | PartialLeft
     | PartialRight
     | PartialBoth
+    | Regex
     deriving Show
 
 data MatchPrefs

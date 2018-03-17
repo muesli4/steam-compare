@@ -153,14 +153,16 @@ predForMatchMode m = case m of
     PartialLeft  -> partial
     PartialRight -> flip partial
     PartialBoth  -> \ls rs -> partial ls rs ++ " AND " ++ partial rs ls
+    Regex        -> like
   where
     equal ls rs   = ls ++ " = " ++ rs
-    partial ls rs = ls ++ " like ('%' || " ++ rs ++ " || '%')"
+    partial ls rs = ls `like` ("('%' || " ++ rs ++ " || '%')")
+    like ls rs = ls ++ " like " ++ rs
 
 predicate :: MatchPrefs -> (String -> String -> String)
 predicate (MatchPrefs cm mm) = alterBinFunCase cm $ predForMatchMode mm
 
--- TODO return input names
+-- TODO return input names and whether it was exact match
 queryMatchingGames :: IConnection c => c -> MatchPrefs -> NE.NonEmpty String -> IO [(Int, String, Maybe Int)]
 queryMatchingGames c mp (NE.toList -> ns) = 
     map (\[i, n, mS] -> (fromSql i, fromSql n, fromSql mS)) <$> quickQuery' c query (map toSql ns)
