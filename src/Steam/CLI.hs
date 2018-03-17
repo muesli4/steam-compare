@@ -76,7 +76,7 @@ matchPrefsP = MatchPrefs <$> caseP <*> matchModeP
                  <|> flag' PartialLeft (short 'l' <> long "partial-left-match" <> help "Match input games that are contained in game names")
                  <|> flag' PartialRight (short 'r' <> long "partial-right-match" <> help "Match game names that are contained in input games")
                  <|> flag' PartialBoth (short 'b' <> long "partial-right-match" <> help "Allow partial matches on both sides")
-                 <|> flag' Regex (short 'x' <> long "regex-match" <> help "Treat input as regular expressions using '%' and '?'")
+                 <|> flag' Wildcard (short 'w' <> long "wildcard-match" <> help "Treat '%' and '?' as wildcards")
                  <|> pure Exact
 
 queryAppIDP :: Parser MatchAction

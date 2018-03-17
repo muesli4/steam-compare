@@ -153,7 +153,7 @@ predForMatchMode m = case m of
     PartialLeft  -> partial
     PartialRight -> flip partial
     PartialBoth  -> \ls rs -> partial ls rs ++ " OR " ++ partial rs ls
-    Regex        -> like
+    Wildcard     -> like
   where
     equal ls rs   = ls ++ " = " ++ rs
     partial ls rs = ls `like` ("('%' || " ++ rs ++ " || '%')")
