@@ -75,7 +75,7 @@ matchPrefsP = MatchPrefs <$> caseP <*> matchModeP
     matchModeP = flag' Exact (short 'e' <> long "exact-match" <> help "Allow only exact matches")
                  <|> flag' PartialLeft (short 'l' <> long "partial-left-match" <> help "Match input games that are contained in game names")
                  <|> flag' PartialRight (short 'r' <> long "partial-right-match" <> help "Match game names that are contained in input games")
-                 <|> flag' PartialBoth (short 'b' <> long "partial-right-match" <> help "Allow partial matches on both sides")
+                 <|> flag' PartialBoth (short 'b' <> long "partial-both" <> help "Allow partial matches on both sides")
                  <|> flag' Wildcard (short 'w' <> long "wildcard-match" <> help "Treat '%' and '?' as wildcards")
                  <|> pure Exact
 
