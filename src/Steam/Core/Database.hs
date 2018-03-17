@@ -14,15 +14,18 @@ module Steam.Core.Database
     , queryIncompleteAppIDs
     , queryMatchingGames
     , queryAppID
+    , module Steam.Core.Database.Types
     ) where
 
 import           Data.Bifunctor
+import           Data.Function
 import           Data.List
-import qualified Data.List.NonEmpty as NE
 import           Data.Maybe
 import           Database.HDBC
+import qualified Data.List.NonEmpty as NE
 
 import           Steam.Core.Types
+import           Steam.Core.Database.Types
 
 placeholder :: String
 placeholder = "(?)"
@@ -31,7 +34,7 @@ placeholders :: [a] -> String
 placeholders = intercalate "," . (placeholder <$)
 
 mergeQ :: [String] -> String
-mergeQ qs = concatMap (++ ";") qs
+mergeQ = concatMap (++ ";")
 
 --newtype DB c a = DB (ReaderT c IO a)
 
@@ -106,8 +109,8 @@ insertAlias c (NE.toList -> ts) = insertMany c alias $ map (\(appID, realAppID) 
                                                      $ filter (uncurry (/=))
                                                      $ map (second realAppID) ts
 
-insertBlackList :: IConnection c => c -> NE.NonEmpty String -> IO Integer
-insertBlackList c (NE.toList -> ns) = run c query $ map toSql ns
+insertBlackList :: IConnection c => c -> MatchPrefs -> NE.NonEmpty String -> IO Integer
+insertBlackList c mp (NE.toList -> ns) = run c query $ map toSql ns
   where
     query = "WITH inputs(name) as (\
                 \VALUES " ++ placeholders ns ++ "\
@@ -115,12 +118,11 @@ insertBlackList c (NE.toList -> ns) = run c query $ map toSql ns
             \INSERT INTO blacklist \
             \SELECT DISTINCT games.appid \
             \FROM games, inputs \
-            \WHERE games.name LIKE inputs.name;"
-            -- TODO what if rows already exist?
+            \WHERE " ++ predicate mp "games.name" "inputs.name" ++ ";"
 
 -- | Finds all entries in the database which do not have details.
 queryIncompleteAppIDs :: IConnection c => c -> NE.NonEmpty String -> IO [Int]
-queryIncompleteAppIDs c (NE.toList -> ns) = do
+queryIncompleteAppIDs c (NE.toList -> ns) =
     fmap (fromSql . head) <$> quickQuery' c query (toSql <$> ns)
   where
     query = "WITH inputs(name) as (\
@@ -132,8 +134,35 @@ queryIncompleteAppIDs c (NE.toList -> ns) = do
                   \AND g.appid NOT IN (SELECT d.appid FROM details AS d) \
             \EXCEPT SELECT * FROM blacklist;"
 
-queryMatchingGames :: IConnection c => c -> NE.NonEmpty String -> IO [(Int, String, Maybe Int)]
-queryMatchingGames c (NE.toList -> ns) = 
+unaryCall :: String -> String -> String
+unaryCall f x = f ++ '(' : x ++ ")"
+
+alterBinFunCase
+    :: CaseMode
+    -> (String -> String -> String)
+    -> (String -> String -> String)
+alterBinFunCase c f = f `on` mod
+  where
+    mod = case c of
+        CaseInsensitive -> unaryCall "lower"
+        CaseSensitive   -> id
+
+predForMatchMode :: MatchMode -> (String -> String -> String)
+predForMatchMode m = case m of
+    Exact        -> equal
+    PartialLeft  -> partial
+    PartialRight -> flip partial
+    PartialBoth  -> \ls rs -> partial ls rs ++ " AND " ++ partial rs ls
+  where
+    equal ls rs   = ls ++ " = " ++ rs
+    partial ls rs = ls ++ " like ('%' || " ++ rs ++ " || '%')"
+
+predicate :: MatchPrefs -> (String -> String -> String)
+predicate (MatchPrefs cm mm) = alterBinFunCase cm $ predForMatchMode mm
+
+-- TODO return input names
+queryMatchingGames :: IConnection c => c -> MatchPrefs -> NE.NonEmpty String -> IO [(Int, String, Maybe Int)]
+queryMatchingGames c mp (NE.toList -> ns) = 
     map (\[i, n, mS] -> (fromSql i, fromSql n, fromSql mS)) <$> quickQuery' c query (map toSql ns)
   where
     query = "WITH inputs(name) as (\
@@ -141,7 +170,7 @@ queryMatchingGames c (NE.toList -> ns) =
             \) \
             \SELECT DISTINCT games.appid, games.name, details.metacritic_score \
             \FROM games, details, inputs \
-            \WHERE inputs.name LIKE games.name \
+            \WHERE " ++ predicate mp "inputs.name" "games.name" ++ "\
                    \AND games.appid = details.appid \
                    \AND games.appid NOT IN owned_games \
                    \AND games.appid NOT IN blacklist \
@@ -150,5 +179,7 @@ queryMatchingGames c (NE.toList -> ns) =
             \ORDER BY details.metacritic_score DESC"
 
 -- TODO does not escape? test %Civ%
-queryAppID :: IConnection c => c -> String -> IO [(String, Int)]
-queryAppID c game = map (\[n, i] -> (fromSql n, fromSql i)) <$> quickQuery' c "SELECT name, appid FROM games WHERE name LIKE (?)" [toSql game]
+queryAppID :: IConnection c => c -> MatchPrefs -> String -> IO [(String, Int)]
+queryAppID c mp game = map (\[n, i] -> (fromSql n, fromSql i)) <$> quickQuery' c query [toSql game]
+  where
+    query = "SELECT name, appid FROM games WHERE " ++ predicate mp "name" "(?1)"

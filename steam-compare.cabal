@@ -55,6 +55,7 @@ executable steam-compare
   
   -- Modules included in this executable, other than Main.
   other-modules:       Steam.Core.Database,
+                       Steam.Core.Database.Types,
                        Steam.Core.Fetch,
                        Steam.Core.Types,
                        Steam.Core.URL,

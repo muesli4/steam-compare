@@ -1,11 +1,15 @@
 module Steam.CLI
     ( ProgramArgs(..)
     , ProgramAction(..)
+    , MatchAction(..)
+    --, module Steam.Core.Database.Types
     , parseProgArgs
     ) where
 
 import Data.Monoid
 import Options.Applicative
+
+import Steam.Core.Database.Types
 
 data ProgramArgs
     = ProgramArgs
@@ -13,12 +17,20 @@ data ProgramArgs
     , paProgramAction :: ProgramAction
     } deriving Show
 
+data MatchAction
+    = QueryAppID String
+    | Blacklist
+    | Match 
+    deriving Show
+
 data ProgramAction
     = Update
-    | QueryAppID String
-    | Blacklist
-    | Match (Maybe String)
-    deriving Show
+    | MatchAction
+    { maPrefs      :: MatchPrefs
+    , maTrimSpaces :: Bool
+    , maCutSuffix  :: Maybe String
+    , maAct        :: MatchAction
+    } deriving Show
 
 parseProgArgs :: IO ProgramArgs
 parseProgArgs = customExecParser (prefs $ showHelpOnEmpty <> showHelpOnError) progArgsPI
@@ -32,23 +44,40 @@ progArgsPI = info (progArgsP <**> helper) (progDesc desc)
 progArgsP :: Parser ProgramArgs
 progArgsP = ProgramArgs <$> optional cfgP <*> progActP
   where
-    cfgP = strOption (long "config" <> short 'c' <> metavar "CONFIG_PATH")
+    cfgP    = strOption $ long "config"
+                          <> short 'c'
+                          <> metavar "CONFIG_PATH"
+                          <> help cfgDesc
+    cfgDesc = "Override default configuration file"
 
 progActP :: Parser ProgramAction
 progActP = hsubparser $
     foldr (\(n, p, d) r -> command n (info p (progDesc d)) <> r) (metavar "COMMAND")
-    [ ("update"   , pure Update   , "Update applications and owned games")
-    , ("appid"    , queryAppIDP   , "Query for appid of a game")
-    , ("blacklist", pure Blacklist, blacklistDesc)
-    , ("match"    , matchP        , "Find matches in a list of games")
+    [ ("update"   , pure Update                  , "Update applications and owned games")
+    , ("appid"    , matchActionP queryAppIDP     , "Query for appid of a game")
+    , ("blacklist", matchActionP $ pure Blacklist, blacklistDesc)
+    , ("match"    , matchActionP $ pure Match    , "Find matches in a list of games")
     ]
   where
     blacklistDesc = "Hide games that should not appear in future matching."
 
-queryAppIDP :: Parser ProgramAction
+matchActionP :: Parser MatchAction -> Parser ProgramAction
+matchActionP p =
+    flip <$> (MatchAction <$> matchPrefsP <*> trimSpacesP) <*> p <*> optional cutSuffixP
+  where
+    cutSuffixP  = strArgument (help "The character sequence to cut after" <> metavar "CUT_SUFFIX")
+    trimSpacesP = switch (short 't' <> long "trim-spaces" <> help "Trim spaces of input lines")
+
+matchPrefsP :: Parser MatchPrefs
+matchPrefsP = MatchPrefs <$> caseP <*> matchModeP
+  where
+    caseP = flag CaseInsensitive CaseSensitive (short 'S' <> long "case-sensitive")
+    matchModeP = flag' Exact (short 'e' <> long "exact-match" <> help "Allow only exact matches")
+                 <|> flag' PartialLeft (short 'l' <> long "partial-left-match" <> help "Match input games that are contained in game names")
+                 <|> flag' PartialRight (short 'r' <> long "partial-right-match" <> help "Match game names that are contained in input games")
+                 <|> flag' PartialBoth (short 'b' <> long "partial-right-match" <> help "Allow partial matches on both sides")
+                 <|> pure Exact
+
+queryAppIDP :: Parser MatchAction
 queryAppIDP = QueryAppID <$> strArgument (help "The name of a game" <> metavar "GAME")
 
-matchP :: Parser ProgramAction
-matchP = Match <$> optional delimP
-  where
-    delimP = strArgument (help "The character sequence to cut after" <> metavar "DELIM")

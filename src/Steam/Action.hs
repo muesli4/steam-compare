@@ -21,9 +21,9 @@ import           System.Console.ANSI
 import           System.Exit
 import           System.IO
 import           Text.Layout.Table
-import qualified Data.List.NonEmpty             as NE
+import qualified Data.List.NonEmpty           as NE
 import qualified System.Console.Terminal.Size as T
-import qualified System.IO.Strict               as IOS
+import qualified System.IO.Strict             as IOS
 
 import           Steam.Core.Database
 import           Steam.Core.Fetch
@@ -33,6 +33,8 @@ import           Steam.Update
 import           Steam.Util
 
 -- TODO add lookup and link generation for a list of games
+
+type InputMod = String -> String
 
 data ProgramInfo
     = ProgramInfo
@@ -58,9 +60,6 @@ progDBInfo (ProgramInfo sid optDBPath fallbackPath) = case optDBPath of
 progUpdate :: IConnection c => c -> SteamID -> IO ()
 progUpdate c sid = resetOwnedGamesDB c >> updateOwnedGames c sid >>= handleEither c putErrStrLn (commit c)
 
--- | Query the appid for a specific game.
-progQueryAppID :: IConnection c => c -> String -> IO ()
-progQueryAppID c game = queryAppID c game >>= putTableAltWith [def, numCol, def] (\(n, i) -> [n, show i, urlShop i])
 putStrLnIndent :: String -> IO ()
 putStrLnIndent = putStrLn . ("    " ++)
 
@@ -89,9 +88,13 @@ getInputList = cleanInputList . lines <$> IOS.getContents
 terminalWidth :: IO Int
 terminalWidth = maybe 80 T.width <$> T.size
 
+-- | Query the appid for a specific game.
+progQueryAppID :: IConnection c => c -> MatchPrefs -> String -> IO ()
+progQueryAppID c mp game = queryAppID c mp game >>= putTableAltWith [def, numCol, def] (\(n, i) -> [n, show i, urlShop i])
+
 -- | Ask the user for a list of games, output it layouted and perform an
 -- action with it afterwars.
-promptGamesList :: (String -> String) -> String -> (NE.NonEmpty String -> IO ()) -> IO ()
+promptGamesList :: InputMod -> String -> (NE.NonEmpty String -> IO ()) -> IO ()
 promptGamesList inputLineMod verb act = do
     tWidth <- terminalWidth
     putStrLn $ "Paste games to " ++ verb ++ " for and hit CTRL + D on a new line."
@@ -110,15 +113,14 @@ promptGamesList inputLineMod verb act = do
         mapM_ (putStrLnIndent . unwords) $ checkeredCells colorDullBlack id
                                          $ grid specs (map f rs)
 
-
-progBlacklist :: IConnection c => c -> IO ()
-progBlacklist c = promptGamesList id "blacklist" $ \someGames -> do
-    i <- insertBlackList c someGames
+progBlacklist :: IConnection c => c -> MatchPrefs -> InputMod -> IO ()
+progBlacklist c mp inputMod = promptGamesList inputMod "blacklist" $ \someGames -> do
+    i <- insertBlackList c mp someGames
     commit c
     putStrLn $ "Added " ++ show i ++ " entries."
 
-progMatch :: IConnection c => c -> (String -> String) -> IO ()
-progMatch c lineModFun = promptGamesList lineModFun "match" $ \someGames -> do
+progMatch :: IConnection c => c -> MatchPrefs -> InputMod -> IO ()
+progMatch c mp inputMod = promptGamesList inputMod "match" $ \someGames -> do
     putStrLn "Querying games ..."
     ids <- queryIncompleteAppIDs c someGames
     case ids of
@@ -135,7 +137,7 @@ progMatch c lineModFun = promptGamesList lineModFun "match" $ \someGames -> do
                     putTableAltWith [def, def] toErrorCols es
             commit c
     putStrLn "Matching input ..."
-    res <- queryMatchingGames c someGames
+    res <- queryMatchingGames c mp someGames
     case res of
         [] -> putStrLn "No matches found."
         _  -> do

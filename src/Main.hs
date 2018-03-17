@@ -1,3 +1,4 @@
+{-# LANGUAGE RecordWildCards #-}
 import           Control.Applicative
 import           Control.Monad.Loops                   (firstM)
 import           Data.List.Split
@@ -56,12 +57,18 @@ main = do
 prog :: ProgramInfo -> ProgramAction -> IO ()
 prog pi@(ProgramInfo sid optDBPath defDBPath) pa = do
     c <- connectSqlite3 dbPath
+    runRaw c "PRAGMA case_sensitive_like=ON;"
+
     dbInitAction c
+
     case pa of
-        Update          -> progUpdate c sid
-        QueryAppID game -> progQueryAppID c game
-        Blacklist       -> progBlacklist c
-        Match optDelim  -> progMatch c $ maybe id (\d -> head . splitOn d) optDelim
+        Update           -> progUpdate c sid
+        MatchAction {..} -> case maAct of
+            QueryAppID game -> progQueryAppID c maPrefs (inputMod game)
+            Blacklist       -> progBlacklist c maPrefs inputMod
+            Match           -> progMatch c maPrefs inputMod
+          where
+            inputMod = maybe id (\d -> head . splitOn d) maCutSuffix
     disconnect c
   where
     (dbInitAction, dbPath) = progDBInfo pi
