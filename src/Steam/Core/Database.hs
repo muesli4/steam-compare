@@ -152,7 +152,7 @@ predForMatchMode m = case m of
     Exact        -> equal
     PartialLeft  -> partial
     PartialRight -> flip partial
-    PartialBoth  -> \ls rs -> partial ls rs ++ " AND " ++ partial rs ls
+    PartialBoth  -> \ls rs -> partial ls rs ++ " OR " ++ partial rs ls
     Regex        -> like
   where
     equal ls rs   = ls ++ " = " ++ rs
