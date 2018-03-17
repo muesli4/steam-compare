@@ -66,7 +66,7 @@ matchActionP p =
     flip <$> (MatchAction <$> matchPrefsP <*> trimSpacesP) <*> p <*> optional cutSuffixP
   where
     cutSuffixP  = strArgument (help "The character sequence to cut after" <> metavar "CUT_SUFFIX")
-    trimSpacesP = switch (short 't' <> long "trim-spaces" <> help "Trim spaces of input lines")
+    trimSpacesP = not <$> switch (short 'k' <> long "keep-spaces" <> help "Do not trim spaces of input lines")
 
 matchPrefsP :: Parser MatchPrefs
 matchPrefsP = MatchPrefs <$> caseP <*> matchModeP
