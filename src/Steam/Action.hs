@@ -201,10 +201,10 @@ processDetails c appIDs = do
     oneSecond = 1000 * 1000
 
 progReplaceWithLinks :: IConnection c => c -> MatchPrefs -> InputMod -> IO ()
-progReplaceWithLinks c mp inputMod = promptGamesListAndFetchDetails c mp inputMod "replace links" $ \someGames ->
+progReplaceWithLinks c mp inputMod = promptGamesList inputMod "replace links" $ \someGames ->
     putStrLn "" >> queryUniqueAppIDs c mp someGames >>= mapM_ (putStrLn . uncurry toStr)
   where
-    toStr input = maybe input (\(game, appid) -> '[' : game ++ "](" ++ urlGameInfo appid ++ ")")
+    toStr input = maybe input (\(game, appid) -> '[' : game ++ "](" ++ urlShop appid ++ ")")
 
 progDumpBlacklist :: IConnection c => c -> IO ()
 progDumpBlacklist c = queryBlacklist c >>= mapM_ putStrLn
