@@ -139,27 +139,31 @@ predForMatchMode m = case m of
 predicate :: MatchPrefs -> (String -> String -> String)
 predicate MatchPrefs {..} = alterBinFunCase mpCaseMode $ predForMatchMode mpMatchMode
 
--- | Creates the upper part of a query that provides a table named
--- __matched_games__ which contains all games that matched the input either
--- partially but unique or exact.
+-- | Creates a query that provides a table named __matched_games__ which
+-- contains all games that matched the input either partially or exact. This
+-- depends on the passed 'MatchPrefs'. If missing input entries are included,
+-- the query may yield null values for rows that didn't have a (single) match.
+-- Otherwise they are completely dropped.
 matchedGamesQuery :: Bool -> MatchPrefs -> [a] -> String -> String
 matchedGamesQuery includeMissing mp@MatchPrefs {..} ns = case mpMatchMode of
     -- Do not bother with partial matches.
     Exact -> withQuery [ inputsCTE
-                       , foundExactCTE
+                       , if mpSingleMatch
+                         then foundExactUniqueCTE
+                         else foundExactAllCTE
                        , matchedGamesTemplate $
                             "    SELECT i.name, e.input_name, e.exact_appid\n\
                             \    FROM " ++ rejoinLeft "inputs i" "found_exact e" "i.name" "e.input_name"
                        ]
     _     -> if mpSingleMatch
              then withQuery [ inputsCTE
-                            , foundExactCTE
+                            , foundExactUniqueCTE
                             , foundPartialUniqueCTE
                             , matchedGamesCTE
                             ]
              -- Do not bother with exact matches.
              else withQuery [ inputsCTE
-                            , foundPartialCTE
+                            , foundPartialAllCTE
                             , matchedGamesTemplate $
                                   "    SELECT i.name, p.full_name, p.appid\n\
                                   \    FROM " ++ rejoinLeft "inputs i" "found_partial p" "i.name" "p.input_name"
@@ -174,7 +178,10 @@ matchedGamesQuery includeMissing mp@MatchPrefs {..} ns = case mpMatchMode of
     withQuery ctes q      = "WITH " ++ intercalate ", " ctes ++ q
     inputsCTE             =
         cte "inputs" ["name"] $ "    VALUES " ++ placeholders ns
+
+    matchedGamesTemplate  = cte "matched_games" ["search_term", "name", "appid"]
     foundPartialTemplate  = cte "found_partial" ["input_name", "full_name", "appid"]
+    foundExactTemplate    = cte "found_exact" ["input_name", "exact_appid"]
     -- TODO don't lookup entries that have been found exact ?
     -- | Include only partial matches that have exactly one match.
     foundPartialUniqueCTE = foundPartialTemplate $
@@ -184,16 +191,24 @@ matchedGamesQuery includeMissing mp@MatchPrefs {..} ns = case mpMatchMode of
             \    GROUP BY i.name\n\
             \    HAVING MIN(g.appid) = MAX(g.appid)"
 
-    foundPartialCTE       = foundPartialTemplate $
+    foundPartialAllCTE    = foundPartialTemplate $
             "    SELECT i.name, g.name, g.appid\n\
             \    FROM inputs i, games g\n\
             \        WHERE " ++ predicate mp "g.name" "i.name"
-    foundExactCTE         =
-        cte "found_exact" ["input_name", "exact_appid"]
+
+    foundExactUniqueCTE   = foundExactTemplate
+            "    SELECT i.name, MIN(g.appid)\n\
+            \    FROM inputs i, games g\n\
+            \    WHERE i.name = g.name\n\
+            \    GROUP BY i.name\n\
+            \    HAVING MIN(g.appid) = MAX(g.appid)"
+
+    foundExactAllCTE      = foundExactTemplate
             "    SELECT i.name, g.appid\n\
             \    FROM inputs i, games g\n\
             \    WHERE i.name = g.name"
-    matchedGamesCTE       = matchedGamesTemplate
+
+    matchedGamesCTE       = matchedGamesTemplate $
             "    SELECT i.name as search_term,\n\
             \           COALESCE(e.input_name, p.full_name) as name,\n\
             \           COALESCE(e.exact_appid, p.appid) as appid\n\
@@ -203,8 +218,10 @@ matchedGamesQuery includeMissing mp@MatchPrefs {..} ns = case mpMatchMode of
                                                       then ""
                                                       else " AND e.input_name IS NULL"
                                                     ) ++ ")"
-
-    matchedGamesTemplate  = cte "matched_games" ["search_term", "name", "appid"]
+            ++ if includeMissing
+               then ""
+               -- Work around wrong column name resolution in sqlite3
+               else "         WHERE NOT (COALESCE(e.input_name, p.full_name) IS NULL)"
 
 insertBlackList :: IConnection c => c -> MatchPrefs -> NE.NonEmpty String -> IO Integer
 insertBlackList c mp (NE.toList -> ns) = run c query $ toSql <$> ns
@@ -244,7 +261,8 @@ queryMatchingGames c mp (NE.toList -> ns) =
 
 -- TODO does not escape? test %Civ%
 queryAppID :: IConnection c => c -> MatchPrefs -> String -> IO [(String, Int)]
-queryAppID c mp game = map (\[n, i] -> (fromSql n, fromSql i)) <$> quickQuery' c query [toSql game]
+queryAppID c mp game =
+    map (\[n, i] -> (fromSql n, fromSql i)) <$> quickQuery' c query [toSql game]
   where
     query = matchedGamesQuery False mp [game] "SELECT name, appid FROM matched_games"
 
