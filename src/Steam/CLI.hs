@@ -77,8 +77,9 @@ matchActionP p =
     trimSpacesP = not <$> switch (short 'k' <> long "keep-spaces" <> help "Do not trim spaces of input lines")
 
 matchPrefsP :: Parser MatchPrefs
-matchPrefsP = MatchPrefs <$> caseP <*> matchModeP
+matchPrefsP = MatchPrefs <$> singleMatchP <*> caseP <*> matchModeP
   where
+    singleMatchP = not <$> switch (short 'm' <> long "multiple" <> help "Allow matching multiple games")
     caseP = flag CaseInsensitive CaseSensitive (short 'S' <> long "case-sensitive")
     matchModeP = flag' Exact (short 'e' <> long "exact-match" <> help "Allow only exact matches")
                  <|> flag' PartialLeft (short 'l' <> long "partial-left-match" <> help "Match input games that are contained in game names")

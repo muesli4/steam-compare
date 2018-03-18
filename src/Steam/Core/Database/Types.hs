@@ -15,7 +15,8 @@ data MatchMode
 
 data MatchPrefs
     = MatchPrefs
-    { mpCaseMode   :: CaseMode
-    , mpMatchMode  :: MatchMode
+    { mpSingleMatch :: Bool
+    , mpCaseMode    :: CaseMode
+    , mpMatchMode   :: MatchMode
     } deriving Show
 

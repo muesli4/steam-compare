@@ -1,4 +1,4 @@
-{-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE ViewPatterns, RecordWildCards #-}
 module Steam.Core.Database
     ( resetDB
     , resetGamesDB
@@ -111,31 +111,6 @@ insertAlias c (NE.toList -> ts) = insertMany c alias $ map (\(appID, realAppID) 
                                                      $ filter (uncurry (/=))
                                                      $ map (second realAppID) ts
 
-insertBlackList :: IConnection c => c -> MatchPrefs -> NE.NonEmpty String -> IO Integer
-insertBlackList c mp (NE.toList -> ns) = run c query $ map toSql ns
-  where
-    query = "WITH inputs(name) as (\
-                \VALUES " ++ placeholders ns ++ "\
-            \) \
-            \INSERT INTO blacklist \
-            \SELECT DISTINCT games.appid \
-            \FROM games, inputs \
-            \WHERE " ++ predicate mp "games.name" "inputs.name" ++ ";"
-
--- | Finds all entries in the database which do not have details.
-queryIncompleteAppIDs :: IConnection c => c -> MatchPrefs -> NE.NonEmpty String -> IO [Int]
-queryIncompleteAppIDs c mp (NE.toList -> ns) =
-    fmap (fromSql . head) <$> quickQuery' c query (toSql <$> ns)
-  where
-    query = "WITH inputs(name) as (\
-                \VALUES " ++ placeholders ns ++ "\
-            \) \
-            \SELECT DISTINCT g.appid \
-            \FROM games AS g, inputs AS i \
-            \WHERE " ++ predicate mp "g.name" "i.name" ++ " \
-                  \AND g.appid NOT IN (SELECT d.appid FROM details AS d) \
-            \EXCEPT SELECT * FROM blacklist;"
-
 unaryCall :: String -> String -> String
 unaryCall f x = f ++ '(' : x ++ ")"
 
@@ -162,31 +137,118 @@ predForMatchMode m = case m of
     like ls rs = ls ++ " like " ++ rs
 
 predicate :: MatchPrefs -> (String -> String -> String)
-predicate (MatchPrefs cm mm) = alterBinFunCase cm $ predForMatchMode mm
+predicate MatchPrefs {..} = alterBinFunCase mpCaseMode $ predForMatchMode mpMatchMode
+
+-- | Creates the upper part of a query that provides a table named
+-- __matched_games__ which contains all games that matched the input either
+-- partially but unique or exact.
+matchedGamesQuery :: Bool -> MatchPrefs -> [a] -> String -> String
+matchedGamesQuery includeMissing mp@MatchPrefs {..} ns = case mpMatchMode of
+    -- Do not bother with partial matches.
+    Exact -> withQuery [ inputsCTE
+                       , foundExactCTE
+                       , matchedGamesTemplate
+                            "    SELECT i.name, e.input_name, e.exact_appid\n\
+                            \    FROM " ++ rejoinLeft "inputs i" "found_exact e" "i.name" "e.input_name"
+                       ]
+    _     -> if mpSingleMatch
+             then withQuery [ inputsCTE
+                            , foundExactCTE
+                            , foundPartialUniqueCTE
+                            , matchedGamesCTE
+                            ]
+             -- Do not bother with exact matches.
+             else withQuery [ inputsCTE
+                            , foundPartialCTE
+                            , matchedGamesTemplate
+                                  "    SELECT i.name, p.full_name, p.appid\n\
+                                  \    FROM " ++ rejoinLeft "inputs i" "found_partial p" "i.name" "p.input_name"
+                            ]
+  where
+    -- | Rejoin to include missing columns with null values.
+    rejoinLeft ltd rtd lc rc =
+        let join = if includeMissing
+                   then "LEFT OUTER JOIN"
+                   else "JOIN"
+        in ltd ++ ' ' : join ++ ' ' : rtd ++ " ON " ++ lc ++ " = " ++ rc
+
+    cte n cs body         = n ++ '(' : intercalate ", " cs ++ ") AS (\n" ++ body ++ "\n)\n"
+    withQuery ctes q      = "WITH " ++ intercalate ", " ctes ++ q
+    inputsCTE             =
+        cte "inputs" ["name"] $ "    VALUES " ++ placeholders ns
+    foundPartialTemplate  = cte "found_partial" ["input_name", "full_name", "appid"]
+    -- TODO don't lookup entries that have been found exact ?
+    -- | Include only partial matches that have exactly one match.
+    foundPartialUniqueCTE = foundPartialTemplate $
+            "    SELECT i.name, MIN(g.name), MIN(g.appid)\n\
+            \    FROM inputs i, games g\n\
+            \    WHERE " ++ predicate mp "g.name" "i.name" ++ "\n\
+            \    GROUP BY i.name\n\
+            \    HAVING MIN(g.appid) = MAX(g.appid)"
+
+    foundPartialCTE       = foundPartialTemplate $
+            "    SELECT i.name, g.name, g.appid\n\
+            \    FROM inputs i, games g\n\
+            \        WHERE " ++ predicate mp "g.name" "i.name"
+    foundExactCTE         =
+        cte "found_exact" ["input_name", "exact_appid"]
+            "    SELECT i.name, g.appid\n\
+            \    FROM inputs i, games g\n\
+            \    WHERE i.name = g.name"
+    matchedGamesCTE       = matchedGamesTemplate
+            "    SELECT i.name as search_term,\n\
+            \           COALESCE(e.input_name, p.full_name) as name,\n\
+            \           COALESCE(e.exact_appid, p.appid) as appid\n\
+            \    FROM (inputs i LEFT OUTER JOIN found_exact e ON i.name = e.input_name)\n\
+            \         LEFT OUTER JOIN found_partial p\n\
+            \         ON (i.name = p.input_name" ++ ( if includeMissing
+                                                      then ""
+                                                      else " AND e.input_name IS NULL"
+                                                    ) ++ ")"
+
+    matchedGamesTemplate  = cte "matched_games" ["search_term", "name", "appid"]
+
+insertBlackList :: IConnection c => c -> MatchPrefs -> NE.NonEmpty String -> IO Integer
+insertBlackList c mp (NE.toList -> ns) = run c query $ toSql <$> ns
+  where
+    query = matchedGamesQuery False mp ns
+                "INSERT INTO blacklist \
+                \SELECT DISTINCT m.appid \
+                \FROM matched_games m"
+
+-- | Finds all entries in the database which do not have details.
+queryIncompleteAppIDs :: IConnection c => c -> MatchPrefs -> NE.NonEmpty String -> IO [Int]
+queryIncompleteAppIDs c mp (NE.toList -> ns) =
+    fmap (fromSql . head) <$> quickQuery' c query (toSql <$> ns)
+  where
+    query = matchedGamesQuery False mp ns
+                "SELECT DISTINCT m.appid \
+                \FROM matched_games m \
+                \WHERE m.appid NOT IN (SELECT d.appid FROM details AS d) \
+                      \AND NOT (m.apped IS NULL) \
+                \EXCEPT SELECT * FROM blacklist;"
 
 -- TODO return input names and whether it was exact match
 queryMatchingGames :: IConnection c => c -> MatchPrefs -> NE.NonEmpty String -> IO [(Int, String, Maybe Int)]
 queryMatchingGames c mp (NE.toList -> ns) = 
     map (\[i, n, mS] -> (fromSql i, fromSql n, fromSql mS)) <$> quickQuery' c query (map toSql ns)
   where
-    query = "WITH inputs(name) as (\
-                \VALUES " ++ placeholders ns ++ "\
-            \) \
-            \SELECT DISTINCT games.appid, games.name, details.metacritic_score \
-            \FROM games, details, inputs \
-            \WHERE " ++ predicate mp "games.name" "inputs.name" ++ "\
-                   \AND games.appid = details.appid \
-                   \AND games.appid NOT IN owned_games \
-                   \AND games.appid NOT IN blacklist \
-                   \AND games.appid NOT IN (SELECT appid FROM alias) \
-                   \AND details.linux = 1 \
-            \ORDER BY details.metacritic_score DESC"
+    query = matchedGamesQuery False mp ns
+                "SELECT DISTINCT m.appid, m.name, d.metacritic_score \
+                \FROM matched_games m, details d \
+                \WHERE NOT (m.appid IS NULL) \
+                      \AND m.appid = d.appid \
+                      \AND m.appid NOT IN owned_games \
+                      \AND m.appid NOT IN blacklist \
+                      \AND m.appid NOT IN (SELECT appid FROM alias) \
+                      \AND d.linux = 1 \
+                \ORDER BY d.metacritic_score DESC"
 
 -- TODO does not escape? test %Civ%
 queryAppID :: IConnection c => c -> MatchPrefs -> String -> IO [(String, Int)]
 queryAppID c mp game = map (\[n, i] -> (fromSql n, fromSql i)) <$> quickQuery' c query [toSql game]
   where
-    query = "SELECT name, appid FROM games WHERE " ++ predicate mp "name" "(?1)"
+    query = matchedGamesQuery False mp [game] "SELECT name, appid FROM matched_games"
 
 -- | Lookup games in a list and replace found games with exactly one match by
 -- their appid.
@@ -195,23 +257,7 @@ queryUniqueAppIDs c mp (NE.toList -> ns) =
     map (\[o, n, i] -> (fromSql o, (,) <$> fromSql n <*> fromSql i)) <$> quickQuery' c query (toSql <$> ns)
   where
     -- Use exact match if it exists.
-    query = "WITH inputs(name) as (\
-                \VALUES " ++ placeholders ns ++ "\
-            \), found(input_name, name, appid) as (\
-                \SELECT inputs.name, games.name, games.appid \
-                \FROM inputs, games \
-                \WHERE " ++ predicate mp "games.name" "inputs.name" ++ " \
-                \GROUP BY inputs.name \
-                \HAVING COUNT(DISTINCT games.appid) = 1\
-            \), found_exact(input_name, exact_appid) as (\
-                \SELECT inputs.name, games.appid \
-                \FROM inputs, games \
-                \WHERE inputs.name = games.name \
-            \)\
-            \SELECT i.name, COALESCE(e.input_name, f.name), COALESCE(e.exact_appid, f.appid) \
-            \FROM (inputs i LEFT OUTER JOIN found_exact e ON i.name = e.input_name) LEFT OUTER JOIN found f \
-                  \ON i.name = f.input_name\
-            \"
+    query = matchedGamesQuery True mp ns "SELECT * FROM matched_games"
 
 queryBlacklist :: IConnection c => c -> IO [String]
 queryBlacklist c = map (\[c] -> fromSql c) <$> quickQuery' c "SELECT g.name FROM blacklist b, games g WHERE g.appid = b.appid" []
