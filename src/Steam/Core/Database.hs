@@ -147,7 +147,7 @@ matchedGamesQuery includeMissing mp@MatchPrefs {..} ns = case mpMatchMode of
     -- Do not bother with partial matches.
     Exact -> withQuery [ inputsCTE
                        , foundExactCTE
-                       , matchedGamesTemplate
+                       , matchedGamesTemplate $
                             "    SELECT i.name, e.input_name, e.exact_appid\n\
                             \    FROM " ++ rejoinLeft "inputs i" "found_exact e" "i.name" "e.input_name"
                        ]
@@ -160,16 +160,14 @@ matchedGamesQuery includeMissing mp@MatchPrefs {..} ns = case mpMatchMode of
              -- Do not bother with exact matches.
              else withQuery [ inputsCTE
                             , foundPartialCTE
-                            , matchedGamesTemplate
+                            , matchedGamesTemplate $
                                   "    SELECT i.name, p.full_name, p.appid\n\
                                   \    FROM " ++ rejoinLeft "inputs i" "found_partial p" "i.name" "p.input_name"
                             ]
   where
     -- | Rejoin to include missing columns with null values.
     rejoinLeft ltd rtd lc rc =
-        let join = if includeMissing
-                   then "LEFT OUTER JOIN"
-                   else "JOIN"
+        let join = if includeMissing then "LEFT OUTER JOIN" else "INNER JOIN"
         in ltd ++ ' ' : join ++ ' ' : rtd ++ " ON " ++ lc ++ " = " ++ rc
 
     cte n cs body         = n ++ '(' : intercalate ", " cs ++ ") AS (\n" ++ body ++ "\n)\n"
