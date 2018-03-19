@@ -1,4 +1,4 @@
-{-# LANGUAGE ViewPatterns, RecordWildCards #-}
+{-# LANGUAGE ViewPatterns, RecordWildCards, TupleSections, RankNTypes, StandaloneDeriving, UndecidableInstances #-}
 module Steam.Core.Database
     ( resetDB
     , resetGamesDB
@@ -12,20 +12,30 @@ module Steam.Core.Database
     , insertAlias
     , insertBlackList
     , queryIncompleteAppIDs
-    , queryMatchingGames
-    , queryAppID
-    , queryUniqueAppIDs
+    , UseFilter(UseFilter)
+    , ResultRow(..)
+    , OptSimpleRow
+    , OptDetailRow
+    , Identity(..)
+    , SimpleRow
+    , DetailRow
+    , queryMatchingOptSimple
+    , queryMatchingOptDetail
+    , queryMatchingSimple
+    , queryMatchingDetail
     , queryBlacklist
     , module Steam.Core.Database.Types
     ) where
 
 import           Data.Bifunctor
 import           Data.Function
+import           Data.Functor.Identity
 import           Data.List
 import           Data.Maybe
 import           Database.HDBC
 import qualified Data.List.NonEmpty as NE
 
+import           Steam.Types
 import           Steam.Core.Types
 import           Steam.Core.Database.Types
 
@@ -144,8 +154,8 @@ predicate MatchPrefs {..} = alterBinFunCase mpCaseMode $ predForMatchMode mpMatc
 -- depends on the passed 'MatchPrefs'. If missing input entries are included,
 -- the query may yield null values for rows that didn't have a (single) match.
 -- Otherwise they are completely dropped.
-matchedGamesQuery :: Bool -> MatchPrefs -> [a] -> String -> String
-matchedGamesQuery includeMissing mp@MatchPrefs {..} ns = case mpMatchMode of
+matchedGamesQuery :: IncludeNulls -> MatchPrefs -> [a] -> String -> String
+matchedGamesQuery IncludeNulls {..} mp@MatchPrefs {..} ns = case mpMatchMode of
     -- Do not bother with partial matches.
     Exact -> withQuery [ inputsCTE
                        , if mpSingleMatch
@@ -171,7 +181,7 @@ matchedGamesQuery includeMissing mp@MatchPrefs {..} ns = case mpMatchMode of
   where
     -- | Rejoin to include missing columns with null values.
     rejoinLeft ltd rtd lc rc =
-        let join = if includeMissing then "LEFT OUTER JOIN" else "INNER JOIN"
+        let join = if includeNulls then "LEFT OUTER JOIN" else "INNER JOIN"
         in ltd ++ ' ' : join ++ ' ' : rtd ++ " ON " ++ lc ++ " = " ++ rc
 
     cte n cs body         = n ++ '(' : intercalate ", " cs ++ ") AS (\n" ++ body ++ "\n)\n"
@@ -214,11 +224,11 @@ matchedGamesQuery includeMissing mp@MatchPrefs {..} ns = case mpMatchMode of
             \           COALESCE(e.exact_appid, p.appid) as appid\n\
             \    FROM (inputs i LEFT OUTER JOIN found_exact e ON i.name = e.input_name)\n\
             \         LEFT OUTER JOIN found_partial p\n\
-            \         ON (i.name = p.input_name" ++ ( if includeMissing
+            \         ON (i.name = p.input_name" ++ ( if includeNulls
                                                       then ""
                                                       else " AND e.input_name IS NULL"
                                                     ) ++ ")"
-            ++ if includeMissing
+            ++ if includeNulls
                then ""
                -- Work around wrong column name resolution in sqlite3
                else "         WHERE NOT (COALESCE(e.input_name, p.full_name) IS NULL)"
@@ -226,7 +236,7 @@ matchedGamesQuery includeMissing mp@MatchPrefs {..} ns = case mpMatchMode of
 insertBlackList :: IConnection c => c -> MatchPrefs -> NE.NonEmpty String -> IO Integer
 insertBlackList c mp (NE.toList -> ns) = run c query $ toSql <$> ns
   where
-    query = matchedGamesQuery False mp ns
+    query = matchedGamesQuery (IncludeNulls False) mp ns
                 "INSERT INTO blacklist \
                 \SELECT DISTINCT m.appid \
                 \FROM matched_games m"
@@ -236,44 +246,79 @@ queryIncompleteAppIDs :: IConnection c => c -> MatchPrefs -> NE.NonEmpty String 
 queryIncompleteAppIDs c mp (NE.toList -> ns) =
     fmap (fromSql . head) <$> quickQuery' c query (toSql <$> ns)
   where
-    query = matchedGamesQuery False mp ns
+    query = matchedGamesQuery (IncludeNulls False) mp ns
                 "SELECT DISTINCT m.appid \
                 \FROM matched_games m \
                 \WHERE m.appid NOT IN (SELECT d.appid FROM details AS d) \
-                      \AND NOT (m.appid IS NULL) \
                 \EXCEPT SELECT * FROM blacklist;"
+                -- \AND NOT (m.appid IS NULL) \
 
--- TODO return input names and whether it was exact match
-queryMatchingGames :: IConnection c => c -> MatchPrefs -> NE.NonEmpty String -> IO [(Int, String, Maybe Int)]
-queryMatchingGames c mp (NE.toList -> ns) = 
-    map (\[i, n, mS] -> (fromSql i, fromSql n, fromSql mS)) <$> quickQuery' c query (map toSql ns)
-  where
-    query = matchedGamesQuery False mp ns
-                "SELECT DISTINCT m.appid, m.name, d.metacritic_score \
-                \FROM matched_games m, details d \
-                \WHERE NOT (m.appid IS NULL) \
-                      \AND m.appid = d.appid \
-                      \AND m.appid NOT IN owned_games \
-                      \AND m.appid NOT IN blacklist \
-                      \AND m.appid NOT IN (SELECT appid FROM alias) \
-                      \AND d.linux = 1 \
-                \ORDER BY d.metacritic_score DESC"
+-- | 'f :: * -> * -> *' and will recieve the input name as first argument and
+-- the succesful output with optional details as second.
+data ResultRow f d
+    = ResultRow
+    { rrInput :: String
+    , rrRow   :: f (GameEntry, d)
+    }
+
+deriving instance (Show d, Show (f (GameEntry, d))) => Show (ResultRow f d)
+
+type OptSimpleRow = ResultRow Maybe ()
+type OptDetailRow = ResultRow Maybe (Maybe Int)
+type SimpleRow = ResultRow Identity ()
+type DetailRow = ResultRow Identity (Maybe Int)
+
+type QueryIO row = forall c. IConnection c => c -> MatchPrefs -> UseFilter -> NE.NonEmpty String -> IO [row]
+
+newtype IncludeNulls = IncludeNulls { includeNulls :: Bool } deriving Show
+newtype IncludeDetails = IncludeDetails { includeDetails :: Bool } deriving Show
+newtype UseFilter = UseFilter { useFilter :: Bool } deriving Show
+
+matchQuery :: UseFilter -> IncludeDetails -> String
+matchQuery UseFilter {..} IncludeDetails {..} =
+    -- TODO use includeNulls to make join more efficient
+    if useFilter
+    then "SELECT m.search_term, m.name, m.appid" ++ (if includeDetails then ", d.metacritic_score" else "") ++ " \
+          \FROM matched_games m LEFT OUTER JOIN details d ON m.appid = d.appid \
+          \WHERE m.appid NOT IN owned_games \
+          \      AND m.appid NOT IN blacklist \
+          \      AND m.appid NOT IN (SELECT appid FROM alias) \
+          \      AND d.linux = 1 \
+          \ORDER BY d.metacritic_score DESC"
+    else "SELECT m.search_term, m.name, m.appid" ++ (if includeDetails then ", d.metacritic_score" else "") ++ " \
+         \FROM matched_games m" ++ if includeDetails then " LEFT OUTER JOIN details d ON m.appid = d.appid" else ""
 
 -- TODO does not escape? test %Civ%
-queryAppID :: IConnection c => c -> MatchPrefs -> String -> IO [(String, Int)]
-queryAppID c mp game =
-    map (\[n, i] -> (fromSql n, fromSql i)) <$> quickQuery' c query [toSql game]
+-- TODO use alias even without filter?
+queryMatchingTemplate :: IncludeNulls -> IncludeDetails -> ([SqlValue] -> row) -> QueryIO row
+queryMatchingTemplate includeNulls includeDetails convert c mp useFilter (NE.toList -> ns) =
+    fmap convert <$> quickQuery' c query (toSql <$> ns)
   where
-    query = matchedGamesQuery False mp [game] "SELECT name, appid FROM matched_games"
+    query = matchedGamesQuery includeNulls mp ns $ matchQuery useFilter includeDetails
 
--- | Lookup games in a list and replace found games with exactly one match by
--- their appid.
-queryUniqueAppIDs :: IConnection c => c -> MatchPrefs -> NE.NonEmpty String -> IO [(String, Maybe (String, Int))]
-queryUniqueAppIDs c mp (NE.toList -> ns) =
-    map (\[o, n, i] -> (fromSql o, (,) <$> fromSql n <*> fromSql i)) <$> quickQuery' c query (toSql <$> ns)
+queryMatchingOptSimple :: QueryIO OptSimpleRow
+queryMatchingOptSimple = queryMatchingTemplate (IncludeNulls True) (IncludeDetails False) convert
   where
-    -- Use exact match if it exists.
-    query = matchedGamesQuery True mp ns "SELECT * FROM matched_games"
+    convert :: [SqlValue] -> OptSimpleRow
+    convert [input, name, appid] = ResultRow (fromSql input) $ (, ()) <$> (GameEntry <$> fromSql appid <*> fromSql name)
+
+queryMatchingOptDetail :: QueryIO OptDetailRow
+queryMatchingOptDetail = queryMatchingTemplate (IncludeNulls True) (IncludeDetails True) convert
+  where
+    convert :: [SqlValue] -> OptDetailRow
+    convert [input, name, appid, score] = ResultRow (fromSql input) $ (, fromSql score) <$> (GameEntry <$> fromSql appid <*> fromSql name)
+
+queryMatchingSimple :: QueryIO SimpleRow
+queryMatchingSimple = queryMatchingTemplate (IncludeNulls False) (IncludeDetails False) convert
+  where
+    -- TODO use coerce
+    convert [input, name, appid] = ResultRow (fromSql input) $ Identity (GameEntry (fromSql appid) (fromSql name), ())
+
+queryMatchingDetail :: QueryIO DetailRow
+queryMatchingDetail = queryMatchingTemplate (IncludeNulls False) (IncludeDetails True) convert
+  where
+    convert :: [SqlValue] -> DetailRow
+    convert [input, name, appid, score] = ResultRow (fromSql input) $ Identity (GameEntry (fromSql appid) (fromSql name), fromSql score)
 
 queryBlacklist :: IConnection c => c -> IO [String]
 queryBlacklist c = map (\[c] -> fromSql c) <$> quickQuery' c "SELECT g.name FROM blacklist b, games g WHERE g.appid = b.appid" []

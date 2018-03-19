@@ -2,6 +2,7 @@ module Steam.CLI
     ( ProgramArgs(..)
     , ProgramAction(..)
     , MatchAction(..)
+    , OutputAction(..)
     --, module Steam.Core.Database.Types
     , parseProgArgs
     ) where
@@ -10,6 +11,7 @@ import Data.Monoid
 import Options.Applicative
 
 import Steam.Core.Database.Types
+import Steam.Types
 
 data ProgramArgs
     = ProgramArgs
@@ -19,10 +21,17 @@ data ProgramArgs
     } deriving Show
 
 data MatchAction
-    = QueryAppID String
-    | Blacklist
-    | Match 
-    | ReplaceWithLinks
+    = Blacklist
+    | OutputAction
+    { oaOutputAction :: OutputAction
+    , oaOutputPrefs  :: OutputPrefs
+    }
+    deriving Show
+
+-- | Actions that output a list of games.
+data OutputAction
+    = Query
+    | Match
     deriving Show
 
 data ProgramAction
@@ -59,12 +68,11 @@ progArgsP = ProgramArgs <$> optional cfgP <*> optional dbP <*> progActP
 progActP :: Parser ProgramAction
 progActP = hsubparser $
     foldr (\(n, p, d) r -> command n (info p (progDesc d)) <> r) (metavar "COMMAND")
-    [ ("update"            , pure Update                  , "Update applications and owned games")
-    , ("dump-blacklist"    , pure DumpBlacklist           , "Dump the blacklist")
-    , ("appid"             , matchActionP queryAppIDP     , "Query for appid of a game")
-    , ("blacklist"         , matchActionP $ pure Blacklist, blacklistDesc)
-    , ("match"             , matchActionP $ pure Match    , "Find matches in a list of games")
-    , ("replace-with-links", matchActionP $ pure ReplaceWithLinks , "Replace game names with corresponding Steam store links if found")
+    [ ("update"            , pure Update                       , "Update applications and owned games")
+    , ("dump-blacklist"    , pure DumpBlacklist                , "Dump the blacklist")
+    , ("blacklist"         , matchActionP $ pure Blacklist     , blacklistDesc)
+    , ("match"             , matchActionP $ outputActionP Match, "Find matches in a list of games")
+    , ("query"             , matchActionP $ outputActionP Query, "Query for appid of a game")
     ]
   where
     blacklistDesc = "Hide games that should not appear in future matching"
@@ -75,6 +83,19 @@ matchActionP p =
   where
     cutSuffixP  = strArgument (help "The character sequence to cut after" <> metavar "CUT_SUFFIX")
     trimSpacesP = not <$> switch (short 'k' <> long "keep-spaces" <> help "Do not trim spaces of input lines")
+
+outputActionP :: OutputAction -> Parser MatchAction
+outputActionP oa = OutputAction oa <$> (OutputPrefs <$> unmatchedActionP <*> outputModeP)
+  where
+    unmatchedActionP = flag' Display (long "display-unmatched" <> help "Display unmatched input in the result")
+                       <|> flag' DisplaySeperate (long "seperate-unmatched" <> help "Display unmatched input seperate in the result")
+                       <|> flag' Hide (long "hide-unmatched" <> help "Hide unmatched input in the result")
+                       -- TODO take default as argument
+                       <|> pure Hide
+    outputModeP = flag' Plain (long "output-plain" <> help "Output result with plain game names")
+                  <|> flag' Markdown (long "output-markdown" <> help "Output result with markdown links to the shop page")
+                  <|> flag' Tabular (long "output-tabular" <> help "Output result with a table")
+                  <|> pure Tabular
 
 matchPrefsP :: Parser MatchPrefs
 matchPrefsP = MatchPrefs <$> singleMatchP <*> caseP <*> matchModeP
@@ -87,7 +108,4 @@ matchPrefsP = MatchPrefs <$> singleMatchP <*> caseP <*> matchModeP
                  <|> flag' PartialBoth (short 'b' <> long "partial-both" <> help "Allow partial matches on both sides")
                  <|> flag' Wildcard (short 'w' <> long "wildcard-match" <> help "Treat '%' and '?' as wildcards")
                  <|> pure Exact
-
-queryAppIDP :: Parser MatchAction
-queryAppIDP = QueryAppID <$> strArgument (help "The name of a game" <> metavar "GAME")
 

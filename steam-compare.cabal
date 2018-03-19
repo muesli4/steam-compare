@@ -62,6 +62,7 @@ executable steam-compare
                        Steam.Action,
                        Steam.CLI,
                        Steam.Path,
+                       Steam.Types,
                        Steam.Update,
                        Steam.Util
   

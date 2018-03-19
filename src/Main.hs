@@ -51,10 +51,15 @@ prog pi@(ProgramInfo sid _) pa = do
         Update           -> progUpdate c sid
         DumpBlacklist    -> progDumpBlacklist c
         MatchAction {..} -> case maAct of
-            QueryAppID game  -> progQueryAppID c maPrefs (inputMod game)
-            Blacklist        -> progBlacklist c maPrefs inputMod
-            Match            -> progMatch c maPrefs inputMod
-            ReplaceWithLinks -> progReplaceWithLinks c maPrefs inputMod
+            Blacklist         -> progBlacklist c maPrefs inputMod
+            OutputAction {..} ->
+                let progAct = case oaOutputAction of
+                                  -- Query without filtering and while
+                                  -- preserving order.
+                                  Query -> progQuery
+                                  -- Match with specified criteria and order.
+                                  Match -> progMatch
+                in progAct c maPrefs inputMod oaOutputPrefs
           where
             inputMod = maybe id (\d -> head . splitOn d) maCutSuffix
     disconnect c

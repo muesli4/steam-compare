@@ -1,13 +1,13 @@
+{-# LANGUAGE RecordWildCards, RankNTypes #-}
 -- | Actions for the executable.
 module Steam.Action
     ( ProgramInfo(..)
     , progDBInfo
     , progUpdate
-    , progQueryAppID
     , progBlacklist
-    , progMatch
-    , progReplaceWithLinks
     , progDumpBlacklist
+    , progQuery
+    , progMatch
     ) where
 
 import           Control.Concurrent
@@ -31,6 +31,7 @@ import           Steam.Core.Database
 import           Steam.Core.Fetch
 import           Steam.Core.Types
 import           Steam.Core.URL
+import           Steam.Types
 import           Steam.Update
 import           Steam.Util
 
@@ -91,10 +92,6 @@ getInputList = cleanInputList . lines <$> IOS.getContents
 terminalWidth :: IO Int
 terminalWidth = maybe 80 T.width <$> T.size
 
--- | Query the appid for a specific game.
-progQueryAppID :: IConnection c => c -> MatchPrefs -> String -> IO ()
-progQueryAppID c mp game = queryAppID c mp game >>= putTableAltWith [def, numCol, def] (\(n, i) -> [n, show i, urlShop i])
-
 -- | Ask the user for a list of games, output it layouted and perform an
 -- action with it afterwars.
 promptGamesList :: InputMod -> String -> (NE.NonEmpty String -> IO ()) -> IO ()
@@ -145,24 +142,98 @@ promptGamesListAndFetchDetails c mp inputMod verb act =
   where
     toErrorCols (appID, err)        = [show appID, err]
 
-progMatch :: IConnection c => c -> MatchPrefs -> InputMod -> IO ()
-progMatch c mp inputMod = promptGamesListAndFetchDetails c mp inputMod "match" $ \someGames -> do
-    putStrLn "Matching input ..."
-    res <- queryMatchingGames c mp someGames
-    case res of
-        [] -> putStrLn "No matches found."
-        _  -> do
-            putStrLn "Found matching games:"
-            tWidth <- terminalWidth
-            putTableAltWith [ column (expandUntil $ max 40 $ tWidth `div` 2) def def def
-                            , numCol
-                            , def
-                            ]
-                            toResultCols
-                            res
+requiresOptional :: UnmatchedAction -> Bool
+requiresOptional ua = case ua of
+    Hide -> False
+    _    -> True
+
+requiresDetails :: OutputMode -> Bool
+requiresDetails om = case om of
+    Tabular -> True
+    _       -> False
+
+seperateResultRows :: [ResultRow Maybe d] -> ([String], [ResultRow Identity d])
+seperateResultRows = partitionEithers . fmap f
   where
-    -- Outputting data
-    toResultCols (appID, name, mMC) = [name, maybe "" show mMC, urlShop appID]
+    f rr@(ResultRow name optRow) = maybe (Left name) (Right . ResultRow name . Identity) optRow
+
+putTable :: [[String]] -> IO ()
+putTable css = do
+    tWidth <- terminalWidth
+    let colSpecs = [ column (expandUntil $ max 40 $ tWidth `div` 2) def def def
+                   , numCol
+                   ] ++ repeat def
+    putTableAlt colSpecs css
+
+putTableRR :: (f (GameEntry, d) -> Maybe [String]) -> [ResultRow f d] -> IO ()
+putTableRR f = putTable . fmap (\r -> rrInput r : fromMaybe [] (f $ rrRow r))
+
+putPlain :: [String] -> IO ()
+putPlain = mapM_ putStrLn
+
+putPlainRR :: (f (GameEntry, d) -> Maybe String) -> [ResultRow f d] -> IO ()
+putPlainRR f = putPlain . fmap (\r -> fromMaybe (rrInput r) $ f (rrRow r))
+
+putOutputRR
+    :: OutputMode
+    -> (forall a. ((GameEntry, d) -> a) -> f (GameEntry, d) -> Maybe a)
+    -> (d -> [String])
+    -> [ResultRow f d]
+    -> IO ()
+putOutputRR om f g = case om of
+    Plain    -> putPlainRR (f $ \(ge, d) -> name ge)
+    Markdown -> putPlainRR (f $ \(ge, d) -> markdownLink ge)
+    Tabular  -> putTableRR (f $ \(ge, d) -> tableRow ge ++ g d)
+  where
+    markdownLink :: GameEntry -> String
+    markdownLink GameEntry {..} = '[' : name ++ "](" ++ urlShop appid ++ ")"
+
+    tableRow :: GameEntry -> [String]
+    tableRow GameEntry {..} = [name, urlShop appid]
+
+progMatchingQuery :: IConnection c => UseFilter -> c -> MatchPrefs -> InputMod -> OutputPrefs -> IO ()
+progMatchingQuery useFilter c mp inputMod OutputPrefs {..} = promptGamesList' inputMod "match" $ \someGames ->
+    let queryAndDisplayEnsureSeperate q d = do
+            rs <- q c mp useFilter someGames
+            case opUnmatchedAction of
+                DisplaySeperate -> do
+                    let (us, rs') = seperateResultRows rs
+                    unless (null us) $ putStrLn "Unmatched input:" >> putPlain us >> putStrLn ""
+                    outputMatches handleIdentity d rs'
+                _               -> outputMatches handleMaybe d rs
+        queryAndDisplay q d =
+            q c mp useFilter someGames >>= outputMatches handleIdentity d
+    in case (useDetails, requiresOptional opUnmatchedAction) of
+        (False, False) -> queryAndDisplay queryMatchingSimple emptyDetailRow
+        (False, True ) -> queryAndDisplayEnsureSeperate queryMatchingOptSimple emptyDetailRow
+        (True , False) -> queryAndDisplay queryMatchingDetail detailRow
+        (True , True ) -> queryAndDisplayEnsureSeperate queryMatchingOptDetail detailRow
+  where
+    promptGamesList' =
+        if useDetails
+        then promptGamesListAndFetchDetails c mp
+        else promptGamesList
+    useDetails = requiresDetails opOutputMode
+
+    outputMatches :: forall f d. (forall a. ((GameEntry, d) -> a) -> f (GameEntry, d) -> Maybe a)
+                  -> (d -> [String])
+                  -> [ResultRow f d]
+                  -> IO ()
+    outputMatches h d rs  = putStrLn "Matched input:" >> putOutputRR opOutputMode h d rs
+
+    handleIdentity :: forall a b. (a -> b) -> Identity a -> Maybe b
+    handleIdentity g (Identity t) = Just $ g t
+    handleMaybe :: forall a b. (a -> b) -> Maybe a -> Maybe b
+    handleMaybe = fmap
+
+    detailRow         = maybe [] ((: []) . show)
+    emptyDetailRow () = []
+
+progQuery :: IConnection c => c -> MatchPrefs -> InputMod -> OutputPrefs -> IO ()
+progQuery = progMatchingQuery (UseFilter False)
+
+progMatch :: IConnection c => c -> MatchPrefs -> InputMod -> OutputPrefs -> IO ()
+progMatch = progMatchingQuery (UseFilter False)
 
 processDetails :: IConnection c => c -> [Int] -> IO [(Int, String)]
 processDetails c appIDs = do
@@ -199,12 +270,6 @@ processDetails c appIDs = do
     waitFiveMinutes = replicateM (60 * 5) $ putStr "." >> threadDelay oneSecond
     
     oneSecond = 1000 * 1000
-
-progReplaceWithLinks :: IConnection c => c -> MatchPrefs -> InputMod -> IO ()
-progReplaceWithLinks c mp inputMod = promptGamesList inputMod "replace links" $ \someGames ->
-    putStrLn "" >> queryUniqueAppIDs c mp someGames >>= mapM_ (putStrLn . uncurry toStr)
-  where
-    toStr input = maybe input (\(game, appid) -> '[' : game ++ "](" ++ urlShop appid ++ ")")
 
 progDumpBlacklist :: IConnection c => c -> IO ()
 progDumpBlacklist c = queryBlacklist c >>= mapM_ putStrLn
