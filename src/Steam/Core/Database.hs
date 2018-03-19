@@ -155,29 +155,29 @@ predicate MatchPrefs {..} = alterBinFunCase mpCaseMode $ predForMatchMode mpMatc
 -- the query may yield null values for rows that didn't have a (single) match.
 -- Otherwise they are completely dropped.
 matchedGamesQuery :: IncludeNulls -> MatchPrefs -> [a] -> String -> String
-matchedGamesQuery IncludeNulls {..} mp@MatchPrefs {..} ns = case mpMatchMode of
+matchedGamesQuery IncludeNulls {..} mp@MatchPrefs {..} ns = withQuery $ case mpMatchMode of
     -- Do not bother with partial matches.
-    Exact -> withQuery [ inputsCTE
-                       , if mpSingleMatch
-                         then foundExactUniqueCTE
-                         else foundExactAllCTE
-                       , matchedGamesTemplate $
-                            "    SELECT i.name, e.input_name, e.exact_appid\n\
-                            \    FROM " ++ rejoinLeft "inputs i" "found_exact e" "i.name" "e.input_name"
-                       ]
+    Exact -> [ inputsCTE
+             , if mpSingleMatch
+               then foundExactUniqueCTE
+               else foundExactAllCTE
+             , matchedGamesTemplate $
+                  "    SELECT i.name, e.input_name, e.exact_appid\n\
+                  \    FROM " ++ rejoinLeft "inputs i" "found_exact e" "i.name" "e.input_name"
+             ]
     _     -> if mpSingleMatch
-             then withQuery [ inputsCTE
-                            , foundExactUniqueCTE
-                            , foundPartialUniqueCTE
-                            , matchedGamesCTE
-                            ]
+             then [ inputsCTE
+                  , foundExactUniqueCTE
+                  , foundPartialUniqueCTE
+                  , matchedGamesCTE
+                  ]
              -- Do not bother with exact matches.
-             else withQuery [ inputsCTE
-                            , foundPartialAllCTE
-                            , matchedGamesTemplate $
-                                  "    SELECT i.name, p.full_name, p.appid\n\
-                                  \    FROM " ++ rejoinLeft "inputs i" "found_partial p" "i.name" "p.input_name"
-                            ]
+             else [ inputsCTE
+                  , foundPartialAllCTE
+                  , matchedGamesTemplate $
+                        "    SELECT i.name, p.full_name, p.appid\n\
+                        \    FROM " ++ rejoinLeft "inputs i" "found_partial p" "i.name" "p.input_name"
+                  ]
   where
     -- | Rejoin to include missing columns with null values.
     rejoinLeft ltd rtd lc rc =
