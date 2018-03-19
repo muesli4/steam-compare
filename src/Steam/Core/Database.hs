@@ -240,7 +240,7 @@ queryIncompleteAppIDs c mp (NE.toList -> ns) =
                 "SELECT DISTINCT m.appid \
                 \FROM matched_games m \
                 \WHERE m.appid NOT IN (SELECT d.appid FROM details AS d) \
-                      \AND NOT (m.apped IS NULL) \
+                      \AND NOT (m.appid IS NULL) \
                 \EXCEPT SELECT * FROM blacklist;"
 
 -- TODO return input names and whether it was exact match
