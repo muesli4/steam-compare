@@ -107,5 +107,5 @@ matchPrefsP = MatchPrefs <$> singleMatchP <*> caseP <*> matchModeP
                  <|> flag' PartialRight (short 'r' <> long "partial-right-match" <> help "Match game names that are contained in input games")
                  <|> flag' PartialBoth (short 'b' <> long "partial-both" <> help "Allow partial matches on both sides")
                  <|> flag' Wildcard (short 'w' <> long "wildcard-match" <> help "Treat '%' and '?' as wildcards")
-                 <|> pure Exact
+                 <|> pure PartialLeft
 
