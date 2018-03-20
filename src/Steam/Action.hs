@@ -243,7 +243,7 @@ progQuery :: IConnection c => c -> MatchPrefs -> InputMod -> OutputPrefs -> IO (
 progQuery = progMatchingQuery (UseFilter False)
 
 progMatch :: IConnection c => c -> MatchPrefs -> InputMod -> OutputPrefs -> IO ()
-progMatch = progMatchingQuery (UseFilter False)
+progMatch = progMatchingQuery (UseFilter True)
 
 processDetails :: IConnection c => c -> [Int] -> IO [(Int, String)]
 processDetails c appIDs = do
