@@ -101,9 +101,7 @@ promptGamesList inputLineMod verb act = do
     games <- IOS.run $ fmap inputLineMod <$> getInputList
     case NE.nonEmpty games of
         Just someGames -> do
-            let msg = "Games to " ++ verb ++ " (" ++ show (length games) ++ "):"
-            putStrLn $ '-' <$ msg
-            putStrLn msg
+            putOverviewMsgLn ("Games to " ++ verb) someGames
             -- TODO does not fit the screen
             putGridCheckered (repeat $ fixedLeftCol 30) id (chunksOf ((tWidth - 5) `div` 31) games)
             act someGames
@@ -160,9 +158,8 @@ seperateResultRows = partitionEithers . fmap f
 putTable :: [[String]] -> IO ()
 putTable css = do
     tWidth <- terminalWidth
-    let colSpecs = [ column (expandUntil $ max 40 $ tWidth `div` 2) def def def
-                   , numCol
-                   ] ++ repeat def
+    let colSpecs = replicate 2 (column (expandUntil $ max 40 $ tWidth `div` 3) def def def)
+                   ++ numCol : repeat def
     putTableAlt colSpecs css
 
 putTableRR :: (f (GameEntry, d) -> Maybe [String]) -> [ResultRow f d] -> IO ()
@@ -183,13 +180,25 @@ putOutputRR
 putOutputRR om f g = case om of
     Plain    -> putPlainRR (f $ \(ge, d) -> name ge)
     Markdown -> putPlainRR (f $ \(ge, d) -> markdownLink ge)
-    Tabular  -> putTableRR (f $ \(ge, d) -> tableRow ge ++ g d)
+    Tabular  -> putTableRR (f $ \(ge, d) -> tableRow ge $ g d)
   where
     markdownLink :: GameEntry -> String
     markdownLink GameEntry {..} = '[' : name ++ "](" ++ urlShop appid ++ ")"
 
-    tableRow :: GameEntry -> [String]
-    tableRow GameEntry {..} = [name, urlShop appid]
+    tableRow :: GameEntry -> [String] -> [String]
+    tableRow GameEntry {..} cs = name : cs ++ [urlShop appid]
+
+putOverviewMsgLn :: Foldable f => String -> f a -> IO ()
+putOverviewMsgLn msg xs =
+    putStrLn header >> putStrLn ('-' <$ header)
+  where
+    header = msg ++ " (" ++ show (length xs) ++ "):"
+
+putActionMsgLn :: Foldable f => String -> String -> f a -> IO () -> IO ()
+putActionMsgLn failMsg msg xs act =
+    if null xs
+    then putStrLn failMsg
+    else putOverviewMsgLn msg xs >> act
 
 progMatchingQuery :: IConnection c => UseFilter -> c -> MatchPrefs -> InputMod -> OutputPrefs -> IO ()
 progMatchingQuery useFilter c mp inputMod OutputPrefs {..} = promptGamesList' inputMod "match" $ \someGames ->
@@ -198,7 +207,7 @@ progMatchingQuery useFilter c mp inputMod OutputPrefs {..} = promptGamesList' in
             case opUnmatchedAction of
                 DisplaySeperate -> do
                     let (us, rs') = seperateResultRows rs
-                    unless (null us) $ putStrLn "Unmatched input:" >> putPlain us >> putStrLn ""
+                    unless (null us) $ putOverviewMsgLn "Unmatched input" us >> putPlain us >> putStrLn ""
                     outputMatches handleIdentity d rs'
                 _               -> outputMatches handleMaybe d rs
         queryAndDisplay q d =
@@ -219,14 +228,15 @@ progMatchingQuery useFilter c mp inputMod OutputPrefs {..} = promptGamesList' in
                   -> (d -> [String])
                   -> [ResultRow f d]
                   -> IO ()
-    outputMatches h d rs  = putStrLn "Matched input:" >> putOutputRR opOutputMode h d rs
+    outputMatches h d rs  =
+        putActionMsgLn "There were no matches." "Matched input" rs $ putOutputRR opOutputMode h d rs
 
     handleIdentity :: forall a b. (a -> b) -> Identity a -> Maybe b
     handleIdentity g (Identity t) = Just $ g t
     handleMaybe :: forall a b. (a -> b) -> Maybe a -> Maybe b
     handleMaybe = fmap
 
-    detailRow         = maybe [] ((: []) . show)
+    detailRow         = maybe [""] ((: []) . show)
     emptyDetailRow () = []
 
 progQuery :: IConnection c => c -> MatchPrefs -> InputMod -> OutputPrefs -> IO ()
