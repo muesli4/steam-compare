@@ -253,8 +253,8 @@ queryIncompleteAppIDs c mp (NE.toList -> ns) =
                 \EXCEPT SELECT * FROM blacklist;"
                 -- \AND NOT (m.appid IS NULL) \
 
--- | 'f :: * -> * -> *' and will recieve the input name as first argument and
--- the succesful output with optional details as second.
+-- | Captures the notion of optionality in the type and abstracts over the exact
+-- detail type.
 data ResultRow f d
     = ResultRow
     { rrInput :: String
