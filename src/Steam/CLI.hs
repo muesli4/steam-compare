@@ -71,8 +71,8 @@ progActP = hsubparser $
     [ ("update"            , pure Update                       , "Update applications and owned games")
     , ("dump-blacklist"    , pure DumpBlacklist                , "Dump the blacklist")
     , ("blacklist"         , matchActionP $ pure Blacklist     , blacklistDesc)
-    , ("match"             , matchActionP $ outputActionP Match, "Find matches in a list of games")
-    , ("query"             , matchActionP $ outputActionP Query, "Query for appid of a game")
+    , ("match"             , matchActionP $ outputActionP Match, "Find matches in a list of games with your criteria that you don't own")
+    , ("query"             , matchActionP $ outputActionP Query, "Query games for their appids")
     ]
   where
     blacklistDesc = "Hide games that should not appear in future matching"
