@@ -258,7 +258,7 @@ processDetails c appIDs = do
         b : bs -> (\l ls -> l ++ concat ls) <$> processBatch b
                                             <*> mapM (\b -> putStr "Waiting for steam limit "
                                                             >> waitFiveMinutes
-                                                            >> putStr "Continuing fetching "
+                                                            >> putStr "\nContinuing fetching "
                                                             >> processBatch b
                                                      )
                                                      bs
